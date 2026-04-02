@@ -119,6 +119,43 @@ UI_Draw_Cmd :: struct {
     scissor_rect: UI_Rect;
 }
 
+// audio events
+
+UI_Audio_Event_Type :: enum u8 {
+    BUTTON_CLICK;
+    BUTTON_HOVER;
+    CHECKBOX_TOGGLE;
+    SLIDER_CHANGE;
+    SLIDER_GRAB;
+    SLIDER_RELEASE;
+    TEXT_INPUT_CHAR;
+    TEXT_INPUT_BACKSPACE;
+    TEXT_INPUT_CONFIRM;
+    DROPDOWN_OPEN;
+    DROPDOWN_CLOSE;
+    DROPDOWN_SELECT;
+    TAB_SELECT;
+    TREE_EXPAND;
+    TREE_COLLAPSE;
+    WINDOW_OPEN;
+    WINDOW_CLOSE;
+    WINDOW_COLLAPSE;
+    WINDOW_EXPAND;
+    TOOLTIP_SHOW;
+    SCROLL;
+    FOCUS_GAINED;
+    FOCUS_LOST;
+}
+
+UI_Audio_Event :: struct {
+    type:      UI_Audio_Event_Type;
+    source_id: UI_Id;              // which widget emitted it
+    // optional payload for the consumer to use for pitch/volume variation
+    intensity: float32;            // 0..1, e.g. slider delta magnitude, scroll speed
+}
+
+MAX_AUDIO_EVENTS_PER_FRAME :: 64;
+
 // style
 
 UI_Style :: struct {
@@ -265,6 +302,8 @@ UI_Tooltip_State :: struct {
 
 UI_Context :: struct {
     hot:     UI_Id;
+    prev_hot: UI_Id;
+
     active:  UI_Id;
     focused: UI_Id;
 
@@ -314,6 +353,9 @@ UI_Context :: struct {
 
     scroll_consumed: bool;
     popup_blocking_input: bool;
+
+    audio_events:      [MAX_AUDIO_EVENTS_PER_FRAME] UI_Audio_Event;
+    audio_event_count: s32;
 }
 
 // global context
@@ -366,6 +408,7 @@ ui_begin_frame :: (
     ctx := ui_ctx;
 
     ctx.mouse_prev = ctx.mouse;
+    ctx.audio_event_count = 0;
 
     ctx.mouse.dx = mouse_x - ctx.mouse.x;
     ctx.mouse.dy = mouse_y - ctx.mouse.y;
@@ -432,6 +475,7 @@ ui_end_frame :: () {
         ctx.focused = UI_ID_NONE;
     }
 
+
     // close popup if clicked outside both the popup and any widget that claimed hot
     if ctx.open_popup_id != UI_ID_NONE && ctx.mouse.left_pressed && ctx.hot == UI_ID_NONE {
         if !rect_contains(ctx.popup_rect, ctx.mouse.x, ctx.mouse.y) {
@@ -455,6 +499,11 @@ ui_end_frame :: () {
     }
 
     ui_flush_draw_commands();
+
+    if ctx.hot != UI_ID_NONE && ctx.hot != ctx.prev_hot {
+        ui_emit_audio(.BUTTON_HOVER, ctx.hot, 0.3);
+    }
+    ctx.prev_hot = ctx.hot;
 
     ctx.keyboard.key_count = 0;
     ctx.keyboard.char_count = 0;
@@ -667,7 +716,43 @@ ui_make_quad_ndc :: (rect: UI_Rect, color: Vector4) -> (positions: [] Vector3, c
     return positions, colors, indices;
 }
 
-// draw command emitters
+
+// emission of commands
+
+// audio
+
+ui_emit_audio :: (type: UI_Audio_Event_Type, source_id: UI_Id = UI_ID_NONE, intensity: float32 = 1.0) {
+    ctx := ui_ctx;
+    if ctx.audio_event_count >= MAX_AUDIO_EVENTS_PER_FRAME return; // drop if full
+    ctx.audio_events[ctx.audio_event_count] = .{
+        type      = type,
+        source_id = source_id,
+        intensity = intensity,
+    };
+    ctx.audio_event_count += 1;
+}
+
+/*
+
+used client side in your loop, you can do something like this:
+
+for event : ui_drain_audio_events() {
+    if event.type == {
+        case .BUTTON_CLICK;    audio_play("click.wav");
+        ...
+    }
+}
+
+*/
+ui_drain_audio_events :: () -> [] UI_Audio_Event {
+    ctx := ui_ctx;
+    result: [] UI_Audio_Event;
+    result.data  = ctx.audio_events.data;
+    result.count = ctx.audio_event_count;
+    return result;
+}
+
+// draw command
 
 ui_cmd_geometry :: (positions: [] Vector3, rgba_colors: [] Vector4, indices: [] u32) {
     ctx := ui_ctx;
@@ -759,6 +844,14 @@ ui_cmd_scissor_pop :: () {
 ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
     ctx := ui_ctx;
 
+    // save depth state and disable for UI rendering
+    depth_test_was_enabled := glIsEnabled(GL_DEPTH_TEST);
+    depth_write_was_enabled: GLboolean;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, *depth_write_was_enabled);
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+
     for cmd : commands {
         if cmd.type == {
             case .GEOMETRY;
@@ -797,6 +890,11 @@ ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
                 glDisable(GL_SCISSOR_TEST);
         }
     }
+
+    // restore depth state
+    if depth_test_was_enabled  glEnable(GL_DEPTH_TEST);
+    else                       glDisable(GL_DEPTH_TEST);
+    glDepthMask(depth_write_was_enabled);
 }
 
 ui_flush_draw_commands :: () {
