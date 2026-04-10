@@ -26,10 +26,19 @@ ui_label_disabled :: (text: string) {
 
 // separator
 
+// maybe say that this is horizontal?
 ui_separator :: () {
     style := *ui_ctx.style;
     rect := ui_allocate_rect(0, style.border_width + style.item_spacing * 2);
     line_rect: UI_Rect = .{rect.x, rect.y + rect.h * 0.5, rect.w, style.border_width};
+    ui_cmd_rect(line_rect, style.color_separator);
+}
+
+ui_vertical_separator :: (height: float32) {
+    style := *ui_ctx.style;
+    w := style.border_width + style.item_spacing * 2;
+    rect := ui_allocate_rect(w, height);
+    line_rect: UI_Rect = .{rect.x + rect.w * 0.5, rect.y, style.border_width, rect.h};
     ui_cmd_rect(line_rect, style.color_separator);
 }
 
@@ -109,7 +118,7 @@ ui_button :: (label: string) -> bool {
     return clicked;
 }
 
-ui_button_colored :: (label: string, normal: Vector4, hover: Vector4, active: Vector4) -> bool {
+ui_button_colored :: (label: string, normal: Vector4, hover: Vector4, active: Vector4) -> pressed : bool {
     ctx := ui_ctx;
     style := *ctx.style;
     id := ui_get_id(label);
@@ -365,6 +374,23 @@ ui_progress_bar :: (fraction: float32, label: string = "") {
 }
 
 
+/*
+
+Why does this function take a fixed buffer and length instead of something dynamic like String_Builder or [..] u8?
+
+Recall that a string in jai is just a few on memory it has a pointer and a count, it doesn't own memory and it can't append to it.
+To build up text we need something that owns the memory.
+
+So that would logically imply that you would need a String_Builder or a [..] u8, but then these things can run out of space 
+(which would happen because the whole point is that you don't specify the size of the dynamic array at the start). 
+When they run out of space you then have to go get more through the heap, which is slow, and so for a thin ui system you don't want
+to be slowing down other parts of the program, so we don't use that. 
+
+Hey, but then we can use the temp allocator because then when we run out of space we can get more easily, but you reset your temp allocator all the time,
+and these strings need to persist across frames. Hey so why don't I use an arena allocator for all my strings, ok sure but at that point just do this
+because its simpler and you actually know your bound of memory on each one instead of overshooting or undershooting with your arena.
+
+*/
 ui_text_input :: (label: string, buffer: *[256] u8, length: *s32) -> bool {
     ctx := ui_ctx;
     style := *ctx.style;
