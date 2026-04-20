@@ -86,6 +86,7 @@ msdf_font_load :: (json_path: string, png_path: string) -> MSDF_Font {
 
     json_data, json_ok := read_entire_file(json_path);
     assert(json_ok, "Failed to read font JSON: %", json_path);
+    defer free(json_data);
 
     root := json_parse(json_data);
     assert(root != null, "Failed to parse font JSON: %", json_path);
@@ -145,7 +146,7 @@ msdf_font_load :: (json_path: string, png_path: string) -> MSDF_Font {
     return font;
 }
 
-msdf_font_destroy :: (font: *MSDF_Font) {
+deinit :: (font: *MSDF_Font) {
     if font.texture_id != 0 {
         glDeleteTextures(1, *font.texture_id);
         font.texture_id = 0;
