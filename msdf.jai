@@ -256,13 +256,17 @@ msdf_text_geometry_free :: (geometry: *MSDF_Text_Geometry) {
 
 // measurement
 
-msdf_measure_text :: (font: *MSDF_Font, text: string, font_size_px: float32) -> float32 {
+msdf_measure_text_pixels :: (font: *MSDF_Font, text: string, font_size_px: float32) -> float32 {
     width: float32 = 0;
     for i : 0..text.count-1 {
         cp := cast(u32) text[i];
         ptr := table_find_pointer(*font.glyphs, cp);
-        if ptr != null  width += ptr.advance * font_size_px;
-        else            width += font_size_px * 0.5;
+        if ptr != null {
+            width += ptr.advance * font_size_px;
+        } else {
+            // if we can't find it, then we just do a heuristic guess
+            width += font_size_px * 0.5;
+        }
     }
     return width;
 }

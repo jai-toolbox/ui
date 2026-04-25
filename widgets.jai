@@ -48,7 +48,7 @@ ui_separator_text :: (text: string) {
     h := style.font_size + style.padding;
     rect := ui_allocate_rect(0, h);
 
-    text_w := msdf_measure_text(ctx.font, text, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, text, style.font_size);
     text_x := rect.x + style.padding;
     text_y := ui_text_baseline_y(rect, style.font_size);
 
@@ -93,7 +93,7 @@ ui_button :: (label: string) -> bool {
     style := *ctx.style;
     id := ui_get_id(label);
 
-    text_w := msdf_measure_text(ctx.font, label, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     w := text_w + style.padding * 2;
     h := style.button_height;
     rect := ui_allocate_rect(w, h);
@@ -123,7 +123,7 @@ ui_button_colored :: (label: string, normal: Vector4, hover: Vector4, active: Ve
     style := *ctx.style;
     id := ui_get_id(label);
 
-    text_w := msdf_measure_text(ctx.font, label, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     w := text_w + style.padding * 2;
     h := style.button_height;
     rect := ui_allocate_rect(w, h);
@@ -155,7 +155,7 @@ ui_checkbox :: (label: string, value: *bool) -> bool {
     id := ui_get_id(label);
 
     box_size := style.checkbox_size;
-    text_w := msdf_measure_text(ctx.font, label, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     total_w := box_size + style.padding + text_w;
     h := max(box_size, style.font_size) + style.padding;
     rect := ui_allocate_rect(total_w, h);
@@ -198,7 +198,7 @@ ui_radio :: (label: string, value: *s32, option: s32) -> bool {
     id := ui_get_id(label);
 
     box_size := style.checkbox_size;
-    text_w := msdf_measure_text(ctx.font, label, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     total_w := box_size + style.padding + text_w;
     h := max(box_size, style.font_size) + style.padding;
     rect := ui_allocate_rect(total_w, h);
@@ -396,7 +396,7 @@ ui_text_input :: (label: string, buffer: *[256] u8, length: *s32) -> bool {
     style := *ctx.style;
     id := ui_get_id(label);
 
-    label_w := msdf_measure_text(ctx.font, label, style.font_size);
+    label_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     h := style.input_height;
     rect := ui_allocate_rect(0, h);
 
@@ -431,7 +431,7 @@ ui_text_input :: (label: string, buffer: *[256] u8, length: *s32) -> bool {
     ui_cmd_text(current_text, text_x, text_y, style.font_size, style.color_text);
 
     if focused {
-        cursor_x := text_x + msdf_measure_text(ctx.font, current_text, style.font_size);
+        cursor_x := text_x + msdf_measure_text_pixels(ctx.font, current_text, style.font_size);
         blink := cast(s32)(ctx.time_elapsed * 2.0) % 2 == 0;
         if blink {
             cursor_rect: UI_Rect = .{cursor_x, input_rect.y + 3, 1.5, input_rect.h - 6};
@@ -485,7 +485,7 @@ ui_dropdown :: (label: string, items: [] string, selected: *s32) -> bool {
     popup_is_open := ctx.open_popup_id == id;
 
     // label
-    label_w := msdf_measure_text(ctx.font, label, style.font_size);
+    label_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     label_x := rect.x;
     label_y := ui_text_baseline_y(rect, style.font_size);
     ui_cmd_text(label, label_x, label_y, style.font_size, style.color_text);
@@ -710,7 +710,7 @@ ui_draw_tooltip_internal :: () {
     text := ctx.tooltip.text;
     if text.count == 0 return;
 
-    text_w := msdf_measure_text(ctx.font, text, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, text, style.font_size);
     pad := style.padding;
     w := text_w + pad * 2;
     h := style.font_size + pad * 2;
@@ -735,7 +735,7 @@ ui_color_display :: (label: string, color: Vector4) {
     style := *ctx.style;
 
     swatch_size := style.checkbox_size;
-    text_w := msdf_measure_text(ctx.font, label, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     total_w := swatch_size + style.padding + text_w;
     h := max(swatch_size, style.font_size) + style.padding;
     rect := ui_allocate_rect(total_w, h);
@@ -1241,7 +1241,7 @@ ui_begin_tab_bar :: (label: string, selected: *s32, tab_names: [] string) -> s32
 
     for i : 0..tab_names.count-1 {
         tab_id := ui_get_id(tab_names[i]);
-        text_w := msdf_measure_text(ctx.font, tab_names[i], style.font_size);
+        text_w := msdf_measure_text_pixels(ctx.font, tab_names[i], style.font_size);
         w := text_w + style.padding * 2;
         h := style.button_height;
 
@@ -1451,7 +1451,7 @@ ui_drag_float :: (label: string, value: *float32, speed: float32 = 0.1, min_val:
     h := style.input_height;
     rect := ui_allocate_rect(0, h);
 
-    label_w := msdf_measure_text(ctx.font, label, style.font_size);
+    label_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     label_y := ui_text_baseline_y(rect, style.font_size);
     ui_cmd_text(label, rect.x, label_y, style.font_size, style.color_text);
 
@@ -1500,7 +1500,7 @@ ui_drag_int :: (label: string, value: *s32, speed: float32 = 0.5, min_val: s32 =
     h := style.input_height;
     rect := ui_allocate_rect(0, h);
 
-    label_w := msdf_measure_text(ctx.font, label, style.font_size);
+    label_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     label_y := ui_text_baseline_y(rect, style.font_size);
     ui_cmd_text(label, rect.x, label_y, style.font_size, style.color_text);
 
@@ -1548,7 +1548,7 @@ ui_toggle :: (label_on: string, label_off: string, value: *bool) -> bool {
     style := *ctx.style;
     id := ui_get_id(label_on);
 
-    text_w := msdf_measure_text(ctx.font, label, style.font_size);
+    text_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     w := text_w + style.padding * 2;
     h := style.button_height;
     rect := ui_allocate_rect(w, h);

@@ -781,13 +781,15 @@ ui_cmd_rect_outline :: (rect: UI_Rect, color: Vector4) {
     ui_cmd_rect(.{rect.x + rect.w - t, rect.y + t,          t,      rect.h - t * 2}, color);
 }
 
-ui_cmd_text :: (text: string, x: float32, y: float32, font_size: float32, color: Vector4) {
+// we should rename this to queue draw command or something like that.
+// x and y are the 
+ui_cmd_text :: (text: string, left_edge_x: float32, baseline_y: float32, font_size: float32, color: Vector4) {
     ctx := ui_ctx;
     cmd: UI_Draw_Cmd;
     cmd.type = .TEXT;
     cmd.text = text;
-    cmd.text_x = x;
-    cmd.text_y = y;
+    cmd.text_x = left_edge_x;
+    cmd.text_y = baseline_y;
     cmd.font_size = font_size;
     cmd.color = color;
     if ctx.drawing_overlay {
@@ -1000,7 +1002,7 @@ ui_text_baseline_y :: (rect: UI_Rect, font_size: float32) -> float32 {
 }
 
 ui_text_centered_x :: (rect: UI_Rect, text: string, font_size: float32) -> float32 {
-    text_w := msdf_measure_text(ui_ctx.font, text, font_size);
+    text_w := msdf_measure_text_pixels(ui_ctx.font, text, font_size);
     return rect.x + (rect.w - text_w) * 0.5;
 }
 
