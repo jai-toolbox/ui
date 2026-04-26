@@ -849,7 +849,11 @@ ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
     depth_write_was_enabled: GLboolean;
     glGetBooleanv(GL_DEPTH_WRITEMASK, *depth_write_was_enabled);
 
+    // the depth test checks each fragments depth and discards fragments that are behind something
+    // we don't want this for multiple reasons, first we don't want it to interact with the 3d scene we're already probably rendering
+    // also we don't want z-fighting, instead we'll handle the ordering ourselves
     glDisable(GL_DEPTH_TEST);
+    // make it so that the ui doesn't write to the depth buffer, is this redundant?
     glDepthMask(GL_FALSE);
 
     for cmd : commands {
@@ -892,8 +896,11 @@ ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
     }
 
     // restore depth state
-    if depth_test_was_enabled  glEnable(GL_DEPTH_TEST);
-    else                       glDisable(GL_DEPTH_TEST);
+    if depth_test_was_enabled {
+        glEnable(GL_DEPTH_TEST);
+    } else {
+        glDisable(GL_DEPTH_TEST);
+    }
     glDepthMask(depth_write_was_enabled);
 }
 
