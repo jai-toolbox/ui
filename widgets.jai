@@ -166,7 +166,7 @@ ui_checkbox :: (label: string, value: *bool) -> bool {
     ui_try_active(id);
     toggled := ui_was_clicked(id);
     if toggled {
-        value.* = !<<value;
+        value.* = !value.*;
         ui_emit_audio(.CHECKBOX_TOGGLE, id);
     }
 
@@ -174,7 +174,7 @@ ui_checkbox :: (label: string, value: *bool) -> bool {
     ui_cmd_rect(box_rect, bg);
     ui_cmd_rect_outline(box_rect, style.color_border);
 
-    if <<value {
+    if value.* {
         inset: float32 = 3.0;
         check_rect: UI_Rect = .{
             box_rect.x + inset, box_rect.y + inset,
@@ -217,7 +217,7 @@ ui_radio :: (label: string, value: *s32, option: s32) -> bool {
     ui_cmd_rect(box_rect, bg);
     ui_cmd_rect_outline(box_rect, style.color_border);
 
-    if <<value == option {
+    if value.* == option {
         inset: float32 = 4.0;
         inner: UI_Rect = .{
             box_rect.x + inset, box_rect.y + inset,
@@ -243,7 +243,7 @@ ui_slider_float :: (label: string, value: *float32, min_val: float32, max_val: f
     h := style.slider_height + style.font_size + style.padding;
     rect := ui_allocate_rect(0, h);
 
-    value_text := tprint("% : %", label, <<value);
+    value_text := tprint("% : %", label, value.*);
     text_y := rect.y + style.font_size * ctx.font.ascender;
     ui_cmd_text(value_text, rect.x, text_y, style.font_size, style.color_text);
 
@@ -259,9 +259,9 @@ ui_slider_float :: (label: string, value: *float32, min_val: float32, max_val: f
         t = clamp(t, 0.0, 1.0);
         raw := min_val + t * (max_val - min_val);
         new_value := floor(raw * 100.0 + 0.5) / 100.0;
-        if new_value != <<value {
-            old_value := <<value;
-            <<value = new_value;
+        if new_value != value.* {
+            old_value := value.*;
+            value.* = new_value;
             changed = true;
             delta := abs(new_value - old_value) / (max_val - min_val);
             ui_emit_audio(.SLIDER_CHANGE, id, clamp(delta * 5.0, 0.0, 1.0));
@@ -273,7 +273,7 @@ ui_slider_float :: (label: string, value: *float32, min_val: float32, max_val: f
     ui_cmd_rect(track_rect, style.color_slider_track);
     ui_cmd_rect_outline(track_rect, style.color_border);
 
-    t := clamp((<<value - min_val) / (max_val - min_val), 0.0, 1.0);
+    t := clamp((value.* - min_val) / (max_val - min_val), 0.0, 1.0);
     fill_w := t * track_rect.w;
     if fill_w > 0 {
         ui_cmd_rect(.{track_rect.x, track_rect.y, fill_w, track_rect.h}, style.color_accent);
@@ -301,7 +301,7 @@ ui_slider_int :: (label: string, value: *s32, min_val: s32, max_val: s32) -> boo
     h := style.slider_height + style.font_size + style.padding;
     rect := ui_allocate_rect(0, h);
 
-    value_text := tprint("% : %", label, <<value);
+    value_text := tprint("% : %", label, value.*);
     text_y := rect.y + style.font_size * ctx.font.ascender;
     ui_cmd_text(value_text, rect.x, text_y, style.font_size, style.color_text);
 
@@ -317,9 +317,9 @@ ui_slider_int :: (label: string, value: *s32, min_val: s32, max_val: s32) -> boo
         t = clamp(t, 0.0, 1.0);
         raw := cast(float32) min_val + t * cast(float32)(max_val - min_val);
         new_value := cast(s32) (raw + 0.5);
-        if new_value != <<value {
-            old_value := <<value;
-            <<value = new_value;
+        if new_value != value.* {
+            old_value := value.*;
+            value.* = new_value;
             changed = true;
             range := cast(float32)(max_val - min_val);
             delta := abs(cast(float32)(new_value - old_value)) / range;
@@ -332,7 +332,7 @@ ui_slider_int :: (label: string, value: *s32, min_val: s32, max_val: s32) -> boo
     ui_cmd_rect(track_rect, style.color_slider_track);
     ui_cmd_rect_outline(track_rect, style.color_border);
 
-    t := clamp((cast(float32)(<<value - min_val)) / cast(float32)(max_val - min_val), 0.0, 1.0);
+    t := clamp((cast(float32)(value.* - min_val)) / cast(float32)(max_val - min_val), 0.0, 1.0);
     fill_w := t * track_rect.w;
     if fill_w > 0 {
         ui_cmd_rect(.{track_rect.x, track_rect.y, fill_w, track_rect.h}, style.color_accent);
@@ -422,7 +422,7 @@ ui_text_input :: (label: string, buffer: *[256] u8, length: *s32) -> bool {
 
     current_text: string;
     current_text.data = buffer.data;
-    current_text.count = <<length;
+    current_text.count = length.*;
 
     text_x := input_rect.x + style.padding * 0.5;
     text_y := ui_text_baseline_y(input_rect, style.font_size);
@@ -446,9 +446,9 @@ ui_text_input :: (label: string, buffer: *[256] u8, length: *s32) -> bool {
         for i : 0..ctx.keyboard.char_count-1 {
             c := ctx.keyboard.chars_entered[i];
             if c >= 32 && c < 127 {
-                if <<length < 255 {
-                    (<<buffer)[<<length] = c;
-                    <<length += 1;
+                if length.* < 255 {
+                    (buffer.*)[length.*] = c;
+                    length.* += 1;
                     changed = true;
                     ui_emit_audio(.TEXT_INPUT_CHAR, id, 0.8);
                 }
@@ -458,8 +458,8 @@ ui_text_input :: (label: string, buffer: *[256] u8, length: *s32) -> bool {
         for i : 0..ctx.keyboard.key_count-1 {
             key := ctx.keyboard.keys_pressed[i];
             if key == .BACKSPACE {
-                if <<length > 0 {
-                    <<length -= 1;
+                if length.* > 0 {
+                    length.* -= 1;
                     changed = true;
                     ui_emit_audio(.TEXT_INPUT_BACKSPACE, id);
                 }
@@ -525,8 +525,8 @@ ui_dropdown :: (label: string, items: [] string, selected: *s32) -> bool {
     ui_cmd_rect_outline(combo_rect, style.color_border);
 
     // current selection text
-    current_text := ifx <<selected >= 0 && <<selected < cast(s32) items.count
-                    then items[<<selected]
+    current_text := ifx selected.* >= 0 && selected.* < cast(s32) items.count
+                    then items[selected.*]
                     else "---";
     text_x := combo_rect.x + style.padding;
     text_y := ui_text_baseline_y(combo_rect, style.font_size);
@@ -564,14 +564,14 @@ ui_dropdown :: (label: string, items: [] string, selected: *s32) -> bool {
             }
 
             if is_hovered && ctx.active == item_id && ctx.mouse.left_released {
-                <<selected = cast(s32) i;
+                selected.* = cast(s32) i;
                 ctx.open_popup_id = UI_ID_NONE;
                 changed = true;
                 ui_emit_audio(.DROPDOWN_SELECT, id);
             }
 
             item_bg := ifx is_hovered then style.color_bg_hover
-                        else ifx cast(s32) i == <<selected then style.color_bg_active
+                        else ifx cast(s32) i == selected.* then style.color_bg_active
                         else style.color_window_bg;
             ui_cmd_rect(item_rect, item_bg);
 
@@ -775,7 +775,7 @@ ui_color_edit3 :: (label: string, color: *Vector4) -> bool {
     if ui_slider_float("B", *b, 0, 1)  { color.z = b; changed = true; }
     ui_end_row();
 
-    ui_color_display("Preview", <<color);
+    ui_color_display("Preview", color.*);
 
     return changed;
 }
@@ -1250,11 +1250,11 @@ ui_begin_tab_bar :: (label: string, selected: *s32, tab_names: [] string) -> s32
         ui_try_hot(tab_id, rect);
         ui_try_active(tab_id);
         if ui_was_clicked(tab_id) {
-            <<selected = cast(s32) i;
+            selected.* = cast(s32) i;
             ui_emit_audio(.TAB_SELECT, tab_id);
         }
 
-        is_selected := <<selected == cast(s32) i;
+        is_selected := selected.* == cast(s32) i;
 
         bg: Vector4;
         if is_selected                    bg = style.color_accent;
@@ -1271,7 +1271,7 @@ ui_begin_tab_bar :: (label: string, selected: *s32, tab_names: [] string) -> s32
 
     ui_end_row();
 
-    return <<selected;
+    return selected.*;
 }
 
 ui_end_tab_bar :: () {
@@ -1464,12 +1464,12 @@ ui_drag_float :: (label: string, value: *float32, speed: float32 = 0.1, min_val:
 
     changed := false;
     if ui_is_active(id) && ctx.mouse.left_down {
-        raw := <<value + ctx.mouse.dx * speed;
+        raw := value.* + ctx.mouse.dx * speed;
         raw = clamp(raw, min_val, max_val);
         new_value := floor(raw * 100.0 + 0.5) / 100.0;
-        if new_value != <<value {
-            old_value := <<value;
-            <<value = new_value;
+        if new_value != value.* {
+            old_value := value.*;
+            value.* = new_value;
             changed = true;
             delta := abs(new_value - old_value) / (max_val - min_val);
             ui_emit_audio(.SLIDER_CHANGE, id, clamp(delta * 5.0, 0.0, 1.0));
@@ -1484,7 +1484,7 @@ ui_drag_float :: (label: string, value: *float32, speed: float32 = 0.1, min_val:
     ui_cmd_rect(drag_rect, bg);
     ui_cmd_rect_outline(drag_rect, style.color_border);
 
-    value_text := tprint("%.2", <<value);
+    value_text := tprint("%.2", value.*);
     value_x := drag_rect.x + style.padding * 0.5;
     value_y := ui_text_baseline_y(drag_rect, style.font_size);
     ui_cmd_text(value_text, value_x, value_y, style.font_size, style.color_text);
@@ -1513,12 +1513,12 @@ ui_drag_int :: (label: string, value: *s32, speed: float32 = 0.5, min_val: s32 =
 
     changed := false;
     if ui_is_active(id) && ctx.mouse.left_down {
-        f := cast(float32) <<value + ctx.mouse.dx * speed;
+        f := cast(float32) value.* + ctx.mouse.dx * speed;
         f = clamp(f, cast(float32) min_val, cast(float32) max_val);
         new_value := cast(s32) (f + ifx f >= 0 then 0.5 else -0.5);
-        if new_value != <<value {
-            old_value := <<value;
-            <<value = new_value;
+        if new_value != value.* {
+            old_value := value.*;
+            value.* = new_value;
             changed = true;
             range := cast(float32)(max_val - min_val);
             delta := abs(cast(float32)(new_value - old_value)) / range;
@@ -1534,7 +1534,7 @@ ui_drag_int :: (label: string, value: *s32, speed: float32 = 0.5, min_val: s32 =
     ui_cmd_rect(drag_rect, bg);
     ui_cmd_rect_outline(drag_rect, style.color_border);
 
-    value_text := tprint("%", <<value);
+    value_text := tprint("%", value.*);
     value_x := drag_rect.x + style.padding * 0.5;
     value_y := ui_text_baseline_y(drag_rect, style.font_size);
     ui_cmd_text(value_text, value_x, value_y, style.font_size, style.color_text);
@@ -1543,7 +1543,7 @@ ui_drag_int :: (label: string, value: *s32, speed: float32 = 0.5, min_val: s32 =
 }
 
 ui_toggle :: (label_on: string, label_off: string, value: *bool) -> bool {
-    label := ifx <<value then label_on else label_off;
+    label := ifx value.* then label_on else label_off;
     ctx := ui_ctx;
     style := *ctx.style;
     id := ui_get_id(label_on);
@@ -1557,12 +1557,12 @@ ui_toggle :: (label_on: string, label_off: string, value: *bool) -> bool {
     ui_try_active(id);
     clicked := ui_was_clicked(id);
     if clicked {
-        value.* = !<<value;
+        value.* = !value.*;
         ui_emit_audio(.CHECKBOX_TOGGLE, id);
     }
 
     bg: Vector4;
-    if <<value {
+    if value.* {
         if ui_is_active(id)        bg = style.color_accent_active;
         else if ui_is_hot(id)      bg = style.color_accent_hover;
         else                       bg = style.color_accent;
@@ -1623,9 +1623,9 @@ ui_list_box :: (label: string, items: [] string, selected: *s32, visible_count: 
 
     changed := false;
     for i : 0..items.count-1 {
-        is_selected := cast(s32) i == <<selected;
+        is_selected := cast(s32) i == selected.*;
         if ui_selectable(items[i], is_selected) {
-            <<selected = cast(s32) i;
+            selected.* = cast(s32) i;
             changed = true;
         }
     }

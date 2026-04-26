@@ -381,8 +381,6 @@ ui_init :: (
     ctx.next_z_order = 0;
     ctx.open_popup_id = UI_ID_NONE;
     ctx.drawing_overlay = false;
-    init(*ctx.window_states);
-    init(*ctx.text_input_states);
     ui_ctx = ctx;
 }
 

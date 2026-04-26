@@ -111,7 +111,6 @@ msdf_font_load :: (json_path: string, png_path: string) -> MSDF_Font {
     font.descender   = cast(float32) json_get_number(met, "descender", 0);
 
     glyph_count := json_array_count(glyphs_arr);
-    init(*font.glyphs, cast(u32)(glyph_count * 2));
 
     for i : 0..glyph_count-1 {
         g := json_array_get(glyphs_arr, i);
@@ -195,7 +194,7 @@ msdf_generate_text_geometry :: (
             }
         }
 
-        glyph := << glyph_ptr;
+        glyph := glyph_ptr.*;
 
         if glyph.has_geometry {
             quad_left   := cursor_x + glyph.plane_left   * scale;
