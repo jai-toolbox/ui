@@ -15,18 +15,26 @@ We assume that you've generated an atlas with msdf-atlas-gen.
 
 This file makes it easy to load in and use it.
 
+-----------
+terminology
+
+px : pixels
+font size : The font size is a measurement in px, such that if the font size is N, then every glyph will fit in a square having side length N px (the em square)
+em : the unit equal to the current font size, if font size is 32px then 1em = 32px.
+
 */
 
 MSDF_Font :: struct {
-    distance_range  : float32;
-    atlas_size      : float32;
-    atlas_w         : float32;
-    atlas_h         : float32;
-    y_origin_bottom : bool;
+    distance_range_atlas_px : float32;
+    atlas_size_px           : float32;
+    atlas_w_px              : float32;
+    atlas_h_px              : float32;
 
-    line_height : float32;
-    ascender    : float32;
-    descender   : float32;
+    y_origin_bottom         : bool;
+
+    line_height_em : float32;
+    ascender_em    : float32;
+    descender_em   : float32;
 
     glyphs : Table(u32, MSDF_Glyph);
 
@@ -34,18 +42,18 @@ MSDF_Font :: struct {
 }
 
 MSDF_Glyph :: struct {
-    advance      : float32;
+    advance_em   : float32;
     has_geometry : bool;
 
-    plane_left   : float32;
-    plane_bottom : float32;
-    plane_right  : float32;
-    plane_top    : float32;
+    plane_left_em   : float32;
+    plane_bottom_em : float32;
+    plane_right_em  : float32;
+    plane_top_em    : float32;
 
-    atlas_left   : float32;
-    atlas_bottom : float32;
-    atlas_right  : float32;
-    atlas_top    : float32;
+    atlas_left_px   : float32;
+    atlas_bottom_px : float32;
+    atlas_right_px  : float32;
+    atlas_top_px    : float32;
 }
 
 MSDF_Text_Geometry :: struct {
@@ -100,15 +108,15 @@ msdf_font_load :: (json_path: string, png_path: string) -> MSDF_Font {
     assert(met        != null, "Missing 'metrics' in font JSON: %", json_path);
     assert(glyphs_arr != null, "Missing 'glyphs' in font JSON: %", json_path);
 
-    font.distance_range  = cast(float32) json_get_number(atlas, "distanceRange", 4);
-    font.atlas_size      = cast(float32) json_get_number(atlas, "size", 32);
-    font.atlas_w         = cast(float32) json_get_number(atlas, "width", 512);
-    font.atlas_h         = cast(float32) json_get_number(atlas, "height", 512);
+    font.distance_range_atlas_px = cast(float32) json_get_number(atlas, "distanceRange", 4);
+    font.atlas_size_px           = cast(float32) json_get_number(atlas, "size", 32);
+    font.atlas_w_px              = cast(float32) json_get_number(atlas, "width", 512);
+    font.atlas_h_px              = cast(float32) json_get_number(atlas, "height", 512);
     font.y_origin_bottom = json_get_string(atlas, "yOrigin") == "bottom";
 
-    font.line_height = cast(float32) json_get_number(met, "lineHeight", 1.2);
-    font.ascender    = cast(float32) json_get_number(met, "ascender", 1.0);
-    font.descender   = cast(float32) json_get_number(met, "descender", 0);
+    font.line_height_em = cast(float32) json_get_number(met, "lineHeight", 1.2);
+    font.ascender_em    = cast(float32) json_get_number(met, "ascender", 1.0);
+    font.descender_em   = cast(float32) json_get_number(met, "descender", 0);
 
     glyph_count := json_array_count(glyphs_arr);
 
@@ -118,7 +126,7 @@ msdf_font_load :: (json_path: string, png_path: string) -> MSDF_Font {
 
         glyph: MSDF_Glyph;
         unicode := cast(u32) json_get_int(g, "unicode", 0);
-        glyph.advance = cast(float32) json_get_number(g, "advance", 0);
+        glyph.advance_em = cast(float32) json_get_number(g, "advance", 0);
 
         plane := json_get_object(g, "planeBounds");
         atl   := json_get_object(g, "atlasBounds");
@@ -126,15 +134,15 @@ msdf_font_load :: (json_path: string, png_path: string) -> MSDF_Font {
         if plane != null && atl != null {
             glyph.has_geometry = true;
 
-            glyph.plane_left   = cast(float32) json_get_number(plane, "left");
-            glyph.plane_bottom = cast(float32) json_get_number(plane, "bottom");
-            glyph.plane_right  = cast(float32) json_get_number(plane, "right");
-            glyph.plane_top    = cast(float32) json_get_number(plane, "top");
+            glyph.plane_left_em   = cast(float32) json_get_number(plane, "left");
+            glyph.plane_bottom_em = cast(float32) json_get_number(plane, "bottom");
+            glyph.plane_right_em  = cast(float32) json_get_number(plane, "right");
+            glyph.plane_top_em    = cast(float32) json_get_number(plane, "top");
 
-            glyph.atlas_left   = cast(float32) json_get_number(atl, "left");
-            glyph.atlas_bottom = cast(float32) json_get_number(atl, "bottom");
-            glyph.atlas_right  = cast(float32) json_get_number(atl, "right");
-            glyph.atlas_top    = cast(float32) json_get_number(atl, "top");
+            glyph.atlas_left_px   = cast(float32) json_get_number(atl, "left");
+            glyph.atlas_bottom_px = cast(float32) json_get_number(atl, "bottom");
+            glyph.atlas_right_px  = cast(float32) json_get_number(atl, "right");
+            glyph.atlas_top_px    = cast(float32) json_get_number(atl, "top");
         }
 
         table_add(*font.glyphs, unicode, glyph);
@@ -150,6 +158,7 @@ deinit :: (font: *MSDF_Font) {
         glDeleteTextures(1, *font.texture_id);
         font.texture_id = 0;
     }
+    log("called deinit on the glyphs");
     deinit(*font.glyphs);
 }
 
@@ -158,15 +167,15 @@ deinit :: (font: *MSDF_Font) {
 msdf_generate_text_geometry :: (
     font: *MSDF_Font,
     text: string,
-    x: float32,
-    y: float32,
+    x_px: float32,
+    y_px: float32,
     font_size_px: float32,
     window_w: float32,
     window_h: float32
-) -> MSDF_Text_Geometry, float32 /* total_advance_px */ {
+) -> MSDF_Text_Geometry, total_advance_px : float32 {
 
     geometry: MSDF_Text_Geometry;
-    cursor_x := x;
+    cursor_x_px := x_px;
     scale := font_size_px;
 
     visible_count := 0;
@@ -189,7 +198,7 @@ msdf_generate_text_geometry :: (
         if glyph_ptr == null {
             glyph_ptr = table_find_pointer(*font.glyphs, cast(u32) #char "?");
             if glyph_ptr == null {
-                cursor_x += font_size_px * 0.5;
+                cursor_x_px += font_size_px * 0.5;
                 continue;
             }
         }
@@ -197,27 +206,27 @@ msdf_generate_text_geometry :: (
         glyph := glyph_ptr.*;
 
         if glyph.has_geometry {
-            quad_left   := cursor_x + glyph.plane_left   * scale;
-            quad_right  := cursor_x + glyph.plane_right  * scale;
-            quad_top    := y - glyph.plane_top    * scale;
-            quad_bottom := y - glyph.plane_bottom * scale;
+            quad_left_px   := cursor_x_px + glyph.plane_left_em   * scale;
+            quad_right_px  := cursor_x_px + glyph.plane_right_em  * scale;
+            quad_top_px    := y_px - glyph.plane_top_em    * scale;
+            quad_bottom_px := y_px - glyph.plane_bottom_em * scale;
 
-            ndc_left   := (quad_left   / window_w) * 2.0 - 1.0;
-            ndc_right  := (quad_right  / window_w) * 2.0 - 1.0;
-            ndc_top    := -((quad_top    / window_h) * 2.0 - 1.0);
-            ndc_bottom := -((quad_bottom / window_h) * 2.0 - 1.0);
+            ndc_left   := (quad_left_px   / window_w) * 2.0 - 1.0;
+            ndc_right  := (quad_right_px  / window_w) * 2.0 - 1.0;
+            ndc_top    := -((quad_top_px    / window_h) * 2.0 - 1.0);
+            ndc_bottom := -((quad_bottom_px / window_h) * 2.0 - 1.0);
 
-            u0 := glyph.atlas_left   / font.atlas_w;
-            u1 := glyph.atlas_right  / font.atlas_w;
+            u0 := glyph.atlas_left_px   / font.atlas_w_px;
+            u1 := glyph.atlas_right_px  / font.atlas_w_px;
             v0: float32;
             v1: float32;
 
             if font.y_origin_bottom {
-                v0 = glyph.atlas_bottom / font.atlas_h;
-                v1 = glyph.atlas_top    / font.atlas_h;
+                v0 = glyph.atlas_bottom_px / font.atlas_h_px;
+                v1 = glyph.atlas_top_px    / font.atlas_h_px;
             } else {
-                v0 = 1.0 - glyph.atlas_top    / font.atlas_h;
-                v1 = 1.0 - glyph.atlas_bottom / font.atlas_h;
+                v0 = 1.0 - glyph.atlas_top_px    / font.atlas_h_px;
+                v1 = 1.0 - glyph.atlas_bottom_px / font.atlas_h_px;
             }
 
             array_add(*geometry.positions, .{ndc_left,  ndc_top,    0});
@@ -241,10 +250,10 @@ msdf_generate_text_geometry :: (
             vertex_index += 4;
         }
 
-        cursor_x += glyph.advance * scale;
+        cursor_x_px += glyph.advance_em * scale;
     }
 
-    return geometry, cursor_x - x;
+    return geometry, cursor_x_px - x_px;
 }
 
 msdf_text_geometry_free :: (geometry: *MSDF_Text_Geometry) {
@@ -261,7 +270,7 @@ msdf_measure_text_pixels :: (font: *MSDF_Font, text: string, font_size_px: float
         cp := cast(u32) text[i];
         ptr := table_find_pointer(*font.glyphs, cp);
         if ptr != null {
-            width += ptr.advance * font_size_px;
+            width += ptr.advance_em * font_size_px;
         } else {
             // if we can't find it, then we just do a heuristic guess
             width += font_size_px * 0.5;
@@ -271,11 +280,11 @@ msdf_measure_text_pixels :: (font: *MSDF_Font, text: string, font_size_px: float
 }
 
 msdf_line_height :: (font: *MSDF_Font, font_size_px: float32) -> float32 {
-    return font.line_height * font_size_px;
+    return font.line_height_em * font_size_px;
 }
 
 msdf_screen_pixels_per_distance_range :: (font: *MSDF_Font, font_size_px: float32) -> float32 {
-    r := font.distance_range * (font_size_px / font.atlas_size);
+    r := font.distance_range_atlas_px * (font_size_px / font.atlas_size_px);
     if r < 1.0 r = 1.0;
     return r;
 }

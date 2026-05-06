@@ -244,7 +244,7 @@ ui_slider_float :: (label: string, value: *float32, min_val: float32, max_val: f
     rect := ui_allocate_rect(0, h);
 
     value_text := tprint("% : %", label, value.*);
-    text_y := rect.y + style.font_size * ctx.font.ascender;
+    text_y := rect.y + style.font_size * ctx.font.ascender_em;
     ui_cmd_text(value_text, rect.x, text_y, style.font_size, style.color_text);
 
     track_y := rect.y + style.font_size + style.padding * 0.5;
@@ -302,7 +302,7 @@ ui_slider_int :: (label: string, value: *s32, min_val: s32, max_val: s32) -> boo
     rect := ui_allocate_rect(0, h);
 
     value_text := tprint("% : %", label, value.*);
-    text_y := rect.y + style.font_size * ctx.font.ascender;
+    text_y := rect.y + style.font_size * ctx.font.ascender_em;
     ui_cmd_text(value_text, rect.x, text_y, style.font_size, style.color_text);
 
     track_y := rect.y + style.font_size + style.padding * 0.5;

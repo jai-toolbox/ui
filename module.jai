@@ -1000,8 +1000,8 @@ ui_draw_triangle_right :: (cx: float32, cy: float32, size: float32, color: Vecto
 
 ui_text_baseline_y :: (rect: UI_Rect, font_size: float32) -> float32 {
     ctx := ui_ctx;
-    ascender := ctx.font.ascender;
-    descender := ctx.font.descender;  // typically negative, e.g. -0.2
+    ascender := ctx.font.ascender_em;
+    descender := ctx.font.descender_em;  // typically negative, e.g. -0.2
     text_height := (ascender - descender) * font_size;
     return rect.y + (rect.h - text_height) * 0.5 + ascender * font_size;
 }
