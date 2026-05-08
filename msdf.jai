@@ -16,9 +16,17 @@ We assume that you've generated an atlas with msdf-atlas-gen.
 This file makes it easy to load in and use it.
 
 -----------
+conventions
+
+pixel space is measured from the top left of the screen
+normalized space is specified as the space from ONE to -ONE in some dimension
+
+
+-----------
 terminology
 
-px : pixels
+px : pixel units
+nrm : normalized space units
 font size : The font size is a measurement in px, such that if the font size is N, then every glyph will fit in a square having side length N px (the em square)
 em : the unit equal to the current font size, if font size is 32px then 1em = 32px.
 
@@ -167,15 +175,15 @@ deinit :: (font: *MSDF_Font) {
 msdf_generate_text_geometry :: (
     font: *MSDF_Font,
     text: string,
-    x_px: float32,
-    y_px: float32,
+    left_edge_x_px: float32,
+    baseline_y_px: float32,
     font_size_px: float32,
     window_w: float32,
     window_h: float32
 ) -> MSDF_Text_Geometry, total_advance_px : float32 {
 
     geometry: MSDF_Text_Geometry;
-    cursor_x_px := x_px;
+    cursor_x_px := left_edge_x_px;
     scale := font_size_px;
 
     visible_count := 0;
@@ -208,9 +216,11 @@ msdf_generate_text_geometry :: (
         if glyph.has_geometry {
             quad_left_px   := cursor_x_px + glyph.plane_left_em   * scale;
             quad_right_px  := cursor_x_px + glyph.plane_right_em  * scale;
-            quad_top_px    := y_px - glyph.plane_top_em    * scale;
-            quad_bottom_px := y_px - glyph.plane_bottom_em * scale;
+            quad_top_px    := baseline_y_px - glyph.plane_top_em    * scale;
+            quad_bottom_px := baseline_y_px - glyph.plane_bottom_em * scale;
 
+            // this accounts for aspect ratio here, so in the msdf shader we don't actually need 
+            // an aspect ratio adjustment hence why we pass {1, 1} to the shader right now (so we can remove that probably).
             ndc_left   := (quad_left_px   / window_w) * 2.0 - 1.0;
             ndc_right  := (quad_right_px  / window_w) * 2.0 - 1.0;
             ndc_top    := -((quad_top_px    / window_h) * 2.0 - 1.0);
@@ -253,7 +263,7 @@ msdf_generate_text_geometry :: (
         cursor_x_px += glyph.advance_em * scale;
     }
 
-    return geometry, cursor_x_px - x_px;
+    return geometry, cursor_x_px - left_edge_x_px;
 }
 
 msdf_text_geometry_free :: (geometry: *MSDF_Text_Geometry) {
@@ -294,16 +304,14 @@ msdf_draw_text_immediate :: (
     renderer: *Multi_Channel_Signed_Distance_Field_Text_Renderer,
     font: *MSDF_Font,
     text: string,
-    x: float32,
-    y: float32,
+    left_edge_x_px: float32,
+    baseline_y_px: float32,
     font_size_px: float32,
     color: Vector4,
     window_w: float32,
     window_h: float32
 ) {
-    geometry, total_advance := msdf_generate_text_geometry(
-        font, text, x, y, font_size_px, window_w, window_h
-    );
+    geometry, total_advance := msdf_generate_text_geometry(font, text, left_edge_x_px, baseline_y_px, font_size_px, window_w, window_h);
     defer msdf_text_geometry_free(*geometry);
 
     if geometry.indices.count == 0 return;
@@ -327,11 +335,7 @@ msdf_draw_text_immediate :: (
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    immediate_render(renderer,
-        geometry.indices,
-        geometry.positions,
-        geometry.texture_coordinates
-    );
+    immediate_render(renderer, geometry.indices, geometry.positions, geometry.texture_coordinates);
 }
 
 // rendering (buffered mode)
