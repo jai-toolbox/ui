@@ -6,6 +6,7 @@
 
 #import "tbx/opengl";
 #import "tbx/json";
+#import "tbx/assets";
 #import "Math";
 
 /*
@@ -73,7 +74,10 @@ MSDF_Text_Geometry :: struct {
 msdf_load_atlas_texture :: (png_path: string) -> GLuint {
     w, h, channels: s32;
 
-    pixels := stbi_load(png_path.data, *w, *h, *channels, 4);
+    image_loaded, png_data := load_asset(png_path);
+    assert(image_loaded, "Failed to load atlas image asset: %", png_path);
+
+    pixels := stbi_load_from_memory(png_data.data, xx png_data.count, *w, *h, *channels, 4);
     assert(pixels != null, "Failed to load atlas image: %", png_path);
     defer stbi_image_free(pixels);
 
@@ -100,9 +104,8 @@ msdf_load_atlas_texture :: (png_path: string) -> GLuint {
 msdf_font_load :: (json_path: string, png_path: string) -> MSDF_Font {
     font: MSDF_Font;
 
-    json_data, json_ok := read_entire_file(json_path);
+    json_ok, json_data := load_asset(json_path);
     assert(json_ok, "Failed to read font JSON: %", json_path);
-    defer free(json_data);
 
     root := json_parse(json_data);
     assert(root != null, "Failed to parse font JSON: %", json_path);
