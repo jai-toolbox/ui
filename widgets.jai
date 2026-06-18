@@ -515,7 +515,8 @@ ui_dropdown :: (label: string, items: [] string, selected: *s32) -> bool {
     // update popup position every frame while open (handles scrolling)
     if ctx.open_popup_id == id {
         item_count := cast(float32) items.count;
-        popup_h := item_count * style.button_height;
+        visible_count := min(cast(s32) items.count, 10);
+        popup_h := cast(float32) visible_count * style.button_height;
         ctx.popup_rect = .{combo_rect.x, combo_rect.y + combo_rect.h, combo_rect.w, popup_h};
     }
 
@@ -543,15 +544,48 @@ ui_dropdown :: (label: string, items: [] string, selected: *s32) -> bool {
     if ctx.open_popup_id == id {
         ctx.drawing_overlay = true;
 
+        state_ptr := table_find_pointer(*ctx.window_states, id);
+        if state_ptr == null {
+            new_state: UI_Window_State;
+            new_state.scroll_y = 0;
+            new_state.content_h = cast(float32) items.count * style.button_height;
+            new_state.open = true;
+            table_add(*ctx.window_states, id, new_state);
+            state_ptr = table_find_pointer(*ctx.window_states, id);
+        }
+
+        visible_count := min(cast(s32) items.count, 10);
+        max_first_item := cast(s32) items.count - visible_count;
+        if max_first_item < 0 max_first_item = 0;
+        state_ptr.scroll_y = clamp(state_ptr.scroll_y, 0.0, cast(float32) max_first_item);
+
+        if rect_contains(ctx.popup_rect, ctx.mouse.x, ctx.mouse.y) && ctx.mouse.scroll_y != 0 && !ctx.scroll_consumed {
+            state_ptr.scroll_y -= ctx.mouse.scroll_y * 3.0;
+            state_ptr.scroll_y = clamp(state_ptr.scroll_y, 0.0, cast(float32) max_first_item);
+            ctx.scroll_consumed = true;
+            ui_emit_audio(.SCROLL, id, clamp(abs(ctx.mouse.scroll_y) / 5.0, 0.0, 1.0));
+        }
+
         ui_cmd_rect(ctx.popup_rect, style.color_window_bg);
         ui_cmd_rect_outline(ctx.popup_rect, style.color_border);
 
-        for i : 0..items.count-1 {
+        first_item := cast(s32) floor(state_ptr.scroll_y + 0.5);
+        if first_item < 0 first_item = 0;
+        if first_item > max_first_item first_item = max_first_item;
+
+        list_w := ctx.popup_rect.w;
+        if items.count > cast(s64) visible_count {
+            list_w -= style.scrollbar_width;
+        }
+
+        last_item := min(first_item + visible_count - 1, cast(s32) items.count - 1);
+        for i : first_item..last_item {
             item_id := ui_hash_fnv1a(items[i], id);
+            visible_i := i - first_item;
             item_rect: UI_Rect = .{
                 ctx.popup_rect.x,
-                ctx.popup_rect.y + cast(float32) i * style.button_height,
-                ctx.popup_rect.w,
+                ctx.popup_rect.y + cast(float32) visible_i * style.button_height,
+                list_w,
                 style.button_height
             };
 
@@ -578,6 +612,39 @@ ui_dropdown :: (label: string, items: [] string, selected: *s32) -> bool {
             item_text_x := item_rect.x + style.padding;
             item_text_y := ui_text_baseline_y(item_rect, style.font_size);
             ui_cmd_text(items[i], item_text_x, item_text_y, style.font_size, style.color_text);
+        }
+
+        if items.count > cast(s64) visible_count {
+            track_rect: UI_Rect = .{
+                ctx.popup_rect.x + ctx.popup_rect.w - style.scrollbar_width,
+                ctx.popup_rect.y,
+                style.scrollbar_width,
+                ctx.popup_rect.h
+            };
+            ui_cmd_rect(track_rect, style.color_scrollbar_bg);
+
+            visible_fraction := cast(float32) visible_count / cast(float32) items.count;
+            grab_h := max(track_rect.h * visible_fraction, 20.0);
+            travel := max(track_rect.h - grab_h, 1.0);
+            scroll_fraction := ifx max_first_item > 0 then state_ptr.scroll_y / cast(float32) max_first_item else 0.0;
+            grab_y := track_rect.y + scroll_fraction * travel;
+            grab_rect: UI_Rect = .{track_rect.x, grab_y, track_rect.w, grab_h};
+            scrollbar_id := ui_hash_fnv1a("#dropdown_scrollbar", id);
+
+            if rect_contains(grab_rect, ctx.mouse.x, ctx.mouse.y) {
+                ctx.hot = scrollbar_id;
+                if ctx.mouse.left_pressed ctx.active = scrollbar_id;
+            }
+
+            if ui_is_active(scrollbar_id) && ctx.mouse.left_down {
+                state_ptr.scroll_y += (ctx.mouse.dy / travel) * cast(float32) max_first_item;
+                state_ptr.scroll_y = clamp(state_ptr.scroll_y, 0.0, cast(float32) max_first_item);
+            }
+
+            grab_color := ifx ui_is_active(scrollbar_id) then style.color_accent
+                          else ifx ui_is_hot(scrollbar_id) then style.color_bg_hover
+                          else style.color_scrollbar_grab;
+            ui_cmd_rect(grab_rect, grab_color);
         }
 
         ctx.drawing_overlay = false;
