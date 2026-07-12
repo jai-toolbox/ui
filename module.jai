@@ -2,6 +2,7 @@
 #import "Math";
 #import "Hash_Table";
 #import "GL";
+#import "File_Utilities";
 
 #load "msdf.jai";
 
@@ -1013,4 +1014,3 @@ ui_text_centered_x :: (rect: UI_Rect, text: string, font_size: float32) -> float
 
 
 #load "widgets.jai";
-

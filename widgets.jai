@@ -1702,6 +1702,189 @@ ui_list_box :: (label: string, items: [] string, selected: *s32, visible_count: 
     return changed;
 }
 
+// file selector
+
+UI_File_Select_Entry :: struct {
+    name: string;
+    full_path: string;
+    is_directory: bool;
+}
+
+UI_File_Select_State :: struct {
+    current_directory: string;
+    entries: [..] UI_File_Select_Entry;
+
+    selected_index: s32 = -1;
+    selected_path: string;
+
+    path_buffer: [256] u8;
+    path_length: s32;
+
+    initialized: bool;
+    needs_refresh: bool;
+    had_error: bool;
+    error_message: string;
+}
+
+ui_file_select_free_entries :: (state: *UI_File_Select_State) {
+    for state.entries {
+        free(it.name);
+        free(it.full_path);
+    }
+    array_reset(*state.entries);
+}
+
+ui_file_select_set_selected_path :: (state: *UI_File_Select_State, path: string) {
+    if state.selected_path.count  free(state.selected_path);
+    state.selected_path = copy_string(path);
+}
+
+ui_file_select_sync_path_buffer :: (state: *UI_File_Select_State) {
+    state.path_length = cast(s32) min(state.current_directory.count, state.path_buffer.count - 1);
+    if state.path_length > 0 {
+        memcpy(state.path_buffer.data, state.current_directory.data, state.path_length);
+    }
+}
+
+ui_file_select_set_directory :: (state: *UI_File_Select_State, directory: string) {
+    if state.current_directory.count  free(state.current_directory);
+    state.current_directory = copy_string(directory);
+    state.selected_index = -1;
+    ui_file_select_sync_path_buffer(state);
+    state.needs_refresh = true;
+}
+
+ui_file_select_parent_directory :: (directory: string) -> string {
+    path := parse_path(directory);
+    if path.words.count == 0 return directory;
+
+    parent := path_to_string(path, cast(s32) path.words.count - 1);
+    if parent.count == 0 return ".";
+    return parent;
+}
+
+ui_file_select_refresh :: (state: *UI_File_Select_State) {
+    ui_file_select_free_entries(state);
+    state.had_error = false;
+    state.error_message = "";
+    state.selected_index = -1;
+    state.needs_refresh = false;
+
+    visitor :: (info: *File_Visit_Info, entries: *[..] UI_File_Select_Entry) {
+        entry: UI_File_Select_Entry;
+        entry.name = copy_string(info.short_name);
+        entry.full_path = copy_string(info.full_name);
+        entry.is_directory = info.is_directory;
+
+        array_add(entries, entry);
+        if entry.is_directory {
+            index := entries.count - 1;
+            while index > 0 && !(entries.*)[index - 1].is_directory {
+                (entries.*)[index] = (entries.*)[index - 1];
+                index -= 1;
+            }
+            (entries.*)[index] = entry;
+        }
+    }
+
+    ok := visit_files(state.current_directory, false, *state.entries, visitor, visit_files = true, visit_directories = true, follow_directory_symlinks = false);
+    if !ok {
+        state.had_error = true;
+        state.error_message = tprint("Could not open directory: %", state.current_directory);
+    }
+}
+
+ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory: string = "") -> bool {
+    if !state.initialized {
+        initial_directory := start_directory;
+        if initial_directory.count == 0 {
+            initial_directory = get_working_directory();
+        }
+
+        state.current_directory = copy_string(initial_directory);
+        state.initialized = true;
+        state.needs_refresh = true;
+        ui_file_select_sync_path_buffer(state);
+    }
+
+    if state.needs_refresh {
+        ui_file_select_refresh(state);
+    }
+
+    ui_push_id(label);
+    defer ui_pop_id();
+
+    ui_label(label);
+    ui_text_input("Path", *state.path_buffer, *state.path_length);
+
+    changed := false;
+
+    ui_begin_row();
+    if ui_button("Go") {
+        edited_path: string;
+        edited_path.data = state.path_buffer.data;
+        edited_path.count = state.path_length;
+        ui_file_select_set_directory(state, edited_path);
+    }
+    if ui_button("Up") {
+        parent := ui_file_select_parent_directory(state.current_directory);
+        ui_file_select_set_directory(state, parent);
+    }
+    if ui_button("Refresh") {
+        state.needs_refresh = true;
+    }
+    ui_end_row();
+
+    if state.had_error {
+        ui_label_colored(state.error_message, .{1.0, 0.35, 0.25, 1.0});
+    }
+
+    ui_label(tprint("Current: %", state.current_directory));
+
+    ui_begin_scroll_region("file_select_entries", 260);
+    for i : 0..state.entries.count-1 {
+        entry := state.entries[i];
+        display := ifx entry.is_directory then tprint("D  %", entry.name) else tprint("F  %", entry.name);
+        is_selected := state.selected_index == cast(s32) i;
+        if ui_selectable(display, is_selected) {
+            if entry.is_directory {
+                ui_file_select_set_directory(state, entry.full_path);
+            } else {
+                state.selected_index = cast(s32) i;
+                ui_file_select_set_selected_path(state, entry.full_path);
+            }
+        }
+    }
+    ui_end_scroll_region();
+
+    if state.selected_path.count > 0 {
+        ui_label(tprint("Selected: %", state.selected_path));
+    } else {
+        ui_label_disabled("Selected: <none>");
+    }
+
+    ui_begin_row();
+    if ui_button("Select") {
+        if state.selected_path.count > 0 {
+            changed = true;
+        }
+    }
+    if ui_button("Clear") {
+        state.selected_index = -1;
+        ui_file_select_set_selected_path(state, "");
+    }
+    ui_end_row();
+
+    return changed;
+}
+
+ui_file_select_destroy :: (state: *UI_File_Select_State) {
+    ui_file_select_free_entries(state);
+    if state.current_directory.count  free(state.current_directory);
+    if state.selected_path.count      free(state.selected_path);
+    state.* = .{};
+}
+
 // disabled scope
 
 ui_begin_disabled :: () {
