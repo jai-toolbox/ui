@@ -1744,22 +1744,78 @@ ui_file_select_sync_path_buffer :: (state: *UI_File_Select_State) {
     if state.path_length > 0 {
         memcpy(state.path_buffer.data, state.current_directory.data, state.path_length);
     }
+    for i: state.path_length..state.path_buffer.count - 1 state.path_buffer[i] = 0;
+}
+
+ui_file_select_copy_browser_directory :: (directory: string) -> string {
+    absolute_directory, absolute_ok := get_absolute_path(directory);
+    if absolute_ok {
+        normalize_slashes(absolute_directory);
+        return copy_string(absolute_directory);
+    }
+
+    result := copy_string(directory);
+    normalize_slashes(result);
+    return result;
+}
+
+ui_file_select_collapse_drive_root_slashes :: (path: *string) {
+    if path.*.count < 4 return;
+    if path.*[1] != #char ":" return;
+    if path.*[2] != #char "/" return;
+
+    while path.*.count > 3 && path.*[3] == #char "/" {
+        for i: 3..path.*.count - 2 path.*[i] = path.*[i + 1];
+        path.*.count -= 1;
+    }
 }
 
 ui_file_select_set_directory :: (state: *UI_File_Select_State, directory: string) {
+    new_directory := ui_file_select_copy_browser_directory(directory);
+    normalize_slashes(new_directory);
+    ui_file_select_collapse_drive_root_slashes(*new_directory);
     if state.current_directory.count  free(state.current_directory);
-    state.current_directory = copy_string(directory);
+    state.current_directory = new_directory;
     state.selected_index = -1;
     ui_file_select_sync_path_buffer(state);
     state.needs_refresh = true;
 }
 
-ui_file_select_parent_directory :: (directory: string) -> string {
-    path := parse_path(directory);
-    if path.words.count == 0 return directory;
+ui_file_select_is_windows_drive_root :: (path: string) -> bool {
+    return path.count == 3 && path[1] == #char ":" && path[2] == #char "/";
+}
 
-    parent := path_to_string(path, cast(s32) path.words.count - 1);
-    if parent.count == 0 return ".";
+ui_file_select_parent_directory :: (directory: string) -> string {
+    normalized := copy_temporary_string(directory);
+    normalize_slashes(normalized);
+
+    while normalized.count > 1 {
+        if normalized[normalized.count - 1] != #char "/" break;
+        if ui_file_select_is_windows_drive_root(normalized) break;
+        normalized.count -= 1;
+    }
+
+    if normalized.count == 0 return ".";
+    if normalized.count == 1 && normalized[0] == #char "/" return normalized;
+    if ui_file_select_is_windows_drive_root(normalized) return normalized;
+
+    if normalized.count == 2 && normalized[1] == #char ":" {
+        return tprint("%/", normalized);
+    }
+
+    last_slash: s32 = -1;
+    for i: 0..normalized.count - 1 {
+        if normalized[i] == #char "/" last_slash = cast(s32) i;
+    }
+
+    if last_slash < 0 return ".";
+    if last_slash == 0 return "/";
+
+    parent := normalized;
+    parent.count = last_slash;
+    if parent.count == 2 && parent[1] == #char ":" {
+        parent.count = 3;
+    }
     return parent;
 }
 
@@ -1774,6 +1830,8 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
         entry: UI_File_Select_Entry;
         entry.name = copy_string(info.short_name);
         entry.full_path = copy_string(info.full_name);
+        normalize_slashes(entry.full_path);
+        ui_file_select_collapse_drive_root_slashes(*entry.full_path);
         entry.is_directory = info.is_directory;
 
         array_add(entries, entry);
