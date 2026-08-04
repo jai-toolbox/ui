@@ -1487,7 +1487,7 @@ ui_debug_overlay :: () {
     ui_label(tprint("Hot: %", ctx.hot));
     ui_label(tprint("Active: %", ctx.active));
     ui_label(tprint("Focused: %", ctx.focused));
-    ui_label(tprint("Draw cmds: %", ctx.draw_commands.count));
+    ui_label(tprint("Draw cmds: %", ctx.draw_buffers.commands.count));
     ui_label(tprint("Layout depth: %", ctx.layout_depth));
     ui_label(tprint("FPS: %", ifx ctx.dt > 0 then cast(s32)(1.0 / ctx.dt) else 0));
 }

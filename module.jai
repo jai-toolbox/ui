@@ -106,6 +106,10 @@ UI_Draw_Cmd :: struct {
     type: UI_Draw_Cmd_Type;
 
     // GEOMETRY
+    vertex_offset: s64;
+    vertex_count:  s64;
+    index_offset: s64;
+    index_count:  s64;
     indices:     [] u32;
     positions:   [] Vector3;
     rgba_colors: [] Vector4;
@@ -119,6 +123,43 @@ UI_Draw_Cmd :: struct {
 
     // SCISSOR
     scissor_rect: UI_Rect;
+}
+
+UI_RENDER_BATCH_MAX_VERTICES :: 65536;
+UI_RENDER_BATCH_MAX_INDICES  :: 65536;
+
+UI_Render_Batch_Type :: enum {
+    NONE;
+    GEOMETRY;
+    TEXT;
+}
+
+UI_Render_Batch :: struct {
+    type: UI_Render_Batch_Type;
+
+    indices: [..] u32;
+    positions: [..] Vector3;
+    rgba_colors: [..] Vector4;
+    texture_coordinates: [..] Vector2;
+
+    text_font_size: float32;
+    text_color: Vector4;
+}
+
+UI_Frame_Draw_Buffers :: struct {
+    commands: [..] UI_Draw_Cmd;
+
+    geometry_indices: [..] u32;
+    geometry_positions: [..] Vector3;
+    geometry_rgba_colors: [..] Vector4;
+
+    text_indices: [..] u32;
+    text_positions: [..] Vector3;
+    text_texture_coordinates: [..] Vector2;
+}
+
+ui_color_equal :: (a: Vector4, b: Vector4) -> bool {
+    return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
 }
 
 // audio events
@@ -322,11 +363,12 @@ UI_Context :: struct {
     scissor_stack:       [MAX_SCISSOR_STACK] UI_Rect;
     scissor_stack_depth: s32;
 
-    draw_commands: [..] UI_Draw_Cmd;
-
-    // draw commands that render last, with no scissor (popups, tooltips)
-    overlay_draw_commands: [..] UI_Draw_Cmd;
     drawing_overlay: bool;
+
+    draw_buffers: UI_Frame_Draw_Buffers;
+    overlay_draw_buffers: UI_Frame_Draw_Buffers;
+
+    render_batch: UI_Render_Batch;
 
     style: UI_Style;
 
@@ -389,8 +431,9 @@ ui_init :: (
 ui_destroy :: (ctx: *UI_Context) {
     deinit(*ctx.window_states);
     deinit(*ctx.text_input_states);
-    array_free(ctx.draw_commands);
-    array_free(ctx.overlay_draw_commands);
+    ui_frame_draw_buffers_deinit(*ctx.draw_buffers);
+    ui_frame_draw_buffers_deinit(*ctx.overlay_draw_buffers);
+    ui_render_batch_deinit(*ctx.render_batch);
 }
 
 // frame lifecycle
@@ -427,8 +470,8 @@ ui_begin_frame :: (
     ctx.dt = dt;
     ctx.time_elapsed += dt;
 
-    array_reset_keeping_memory(*ctx.draw_commands);
-    array_reset_keeping_memory(*ctx.overlay_draw_commands);
+    ui_frame_draw_buffers_reset(*ctx.draw_buffers);
+    ui_frame_draw_buffers_reset(*ctx.overlay_draw_buffers);
     ctx.drawing_overlay = false;
 
     ctx.hot = UI_ID_NONE;
@@ -754,23 +797,109 @@ ui_drain_audio_events :: () -> [] UI_Audio_Event {
 
 // draw command
 
-ui_cmd_geometry :: (positions: [] Vector3, rgba_colors: [] Vector4, indices: [] u32) {
+ui_current_draw_buffers :: () -> *UI_Frame_Draw_Buffers {
     ctx := ui_ctx;
+    if ctx.drawing_overlay return *ctx.overlay_draw_buffers;
+    return *ctx.draw_buffers;
+}
+
+ui_draw_cmd_can_merge :: (a: UI_Draw_Cmd, b: UI_Draw_Cmd) -> bool {
+    if a.type != b.type return false;
+    if a.index_offset + a.index_count != b.index_offset return false;
+    if a.vertex_offset + a.vertex_count != b.vertex_offset return false;
+
+    if a.type == {
+        case .GEOMETRY;
+            return true;
+
+        case .TEXT;
+            return a.font_size == b.font_size && ui_color_equal(a.color, b.color);
+
+        case;
+            return false;
+    }
+
+    return false;
+}
+
+ui_add_draw_cmd :: (cmd: UI_Draw_Cmd) {
+    buffers := ui_current_draw_buffers();
+    if buffers.commands.count > 0 {
+        last := *buffers.commands[buffers.commands.count - 1];
+        if ui_draw_cmd_can_merge(last.*, cmd) {
+            last.index_count += cmd.index_count;
+            last.vertex_count += cmd.vertex_count;
+            return;
+        }
+    }
+
+    array_add(*buffers.commands, cmd);
+}
+
+ui_cmd_geometry :: (positions: [] Vector3, rgba_colors: [] Vector4, indices: [] u32) {
+    if indices.count == 0 return;
+
+    buffers := ui_current_draw_buffers();
+    vertex_offset := cast(u32) buffers.geometry_positions.count;
+
     cmd: UI_Draw_Cmd;
     cmd.type = .GEOMETRY;
-    cmd.positions = positions;
-    cmd.rgba_colors = rgba_colors;
-    cmd.indices = indices;
-    if ctx.drawing_overlay {
-        array_add(*ctx.overlay_draw_commands, cmd);
-    } else {
-        array_add(*ctx.draw_commands, cmd);
-    }
+    cmd.vertex_offset = buffers.geometry_positions.count;
+    cmd.vertex_count = positions.count;
+    cmd.index_offset = buffers.geometry_indices.count;
+    cmd.index_count = indices.count;
+
+    array_reserve(*buffers.geometry_positions, buffers.geometry_positions.count + positions.count);
+    array_reserve(*buffers.geometry_rgba_colors, buffers.geometry_rgba_colors.count + rgba_colors.count);
+    array_reserve(*buffers.geometry_indices, buffers.geometry_indices.count + indices.count);
+
+    for positions    array_add(*buffers.geometry_positions, it);
+    for rgba_colors  array_add(*buffers.geometry_rgba_colors, it);
+    for indices      array_add(*buffers.geometry_indices, vertex_offset + it);
+
+    ui_add_draw_cmd(cmd);
 }
 
 ui_cmd_rect :: (rect: UI_Rect, color: Vector4) {
-    positions, colors, indices := ui_make_quad_ndc(rect, color);
-    ui_cmd_geometry(positions, colors, indices);
+    ctx := ui_ctx;
+    buffers := ui_current_draw_buffers();
+
+    ndc_x0 := (rect.x / ctx.window_w) * 2.0 - 1.0;
+    ndc_x1 := ((rect.x + rect.w) / ctx.window_w) * 2.0 - 1.0;
+    ndc_y0 := -((rect.y / ctx.window_h) * 2.0 - 1.0);
+    ndc_y1 := -(((rect.y + rect.h) / ctx.window_h) * 2.0 - 1.0);
+
+    vertex_offset := cast(u32) buffers.geometry_positions.count;
+
+    cmd: UI_Draw_Cmd;
+    cmd.type = .GEOMETRY;
+    cmd.vertex_offset = buffers.geometry_positions.count;
+    cmd.vertex_count = 4;
+    cmd.index_offset = buffers.geometry_indices.count;
+    cmd.index_count = 6;
+
+    array_reserve(*buffers.geometry_positions, buffers.geometry_positions.count + 4);
+    array_reserve(*buffers.geometry_rgba_colors, buffers.geometry_rgba_colors.count + 4);
+    array_reserve(*buffers.geometry_indices, buffers.geometry_indices.count + 6);
+
+    array_add(*buffers.geometry_positions, .{ndc_x0, ndc_y0, 0});
+    array_add(*buffers.geometry_positions, .{ndc_x1, ndc_y0, 0});
+    array_add(*buffers.geometry_positions, .{ndc_x1, ndc_y1, 0});
+    array_add(*buffers.geometry_positions, .{ndc_x0, ndc_y1, 0});
+
+    array_add(*buffers.geometry_rgba_colors, color);
+    array_add(*buffers.geometry_rgba_colors, color);
+    array_add(*buffers.geometry_rgba_colors, color);
+    array_add(*buffers.geometry_rgba_colors, color);
+
+    array_add(*buffers.geometry_indices, vertex_offset + 0);
+    array_add(*buffers.geometry_indices, vertex_offset + 2);
+    array_add(*buffers.geometry_indices, vertex_offset + 1);
+    array_add(*buffers.geometry_indices, vertex_offset + 0);
+    array_add(*buffers.geometry_indices, vertex_offset + 3);
+    array_add(*buffers.geometry_indices, vertex_offset + 2);
+
+    ui_add_draw_cmd(cmd);
 }
 
 ui_cmd_rect_outline :: (rect: UI_Rect, color: Vector4) {
@@ -784,19 +913,37 @@ ui_cmd_rect_outline :: (rect: UI_Rect, color: Vector4) {
 // we should rename this to queue draw command or something like that.
 // x and y are the 
 ui_cmd_text :: (text: string, left_edge_x: float32, baseline_y: float32, font_size: float32, color: Vector4) {
-    ctx := ui_ctx;
+    if text.count == 0 return;
+
+    buffers := ui_current_draw_buffers();
+    vertex_offset := buffers.text_positions.count;
+    index_offset := buffers.text_indices.count;
+
+    msdf_append_text_geometry(
+        ui_ctx.font,
+        text,
+        left_edge_x,
+        baseline_y,
+        font_size,
+        ui_ctx.window_w,
+        ui_ctx.window_h,
+        *buffers.text_positions,
+        *buffers.text_texture_coordinates,
+        *buffers.text_indices
+    );
+
+    index_count := buffers.text_indices.count - index_offset;
+    if index_count == 0 return;
+
     cmd: UI_Draw_Cmd;
     cmd.type = .TEXT;
-    cmd.text = text;
-    cmd.text_x = left_edge_x;
-    cmd.text_y = baseline_y;
+    cmd.vertex_offset = vertex_offset;
+    cmd.vertex_count = buffers.text_positions.count - vertex_offset;
+    cmd.index_offset = index_offset;
+    cmd.index_count = index_count;
     cmd.font_size = font_size;
     cmd.color = color;
-    if ctx.drawing_overlay {
-        array_add(*ctx.overlay_draw_commands, cmd);
-    } else {
-        array_add(*ctx.draw_commands, cmd);
-    }
+    ui_add_draw_cmd(cmd);
 }
 
 ui_cmd_scissor_push :: (rect: UI_Rect) {
@@ -813,7 +960,7 @@ ui_cmd_scissor_push :: (rect: UI_Rect) {
     cmd: UI_Draw_Cmd;
     cmd.type = .SCISSOR_PUSH;
     cmd.scissor_rect = actual_rect;
-    array_add(*ctx.draw_commands, cmd);
+    ui_add_draw_cmd(cmd);
 
     if ctx.scissor_stack_depth < MAX_SCISSOR_STACK {
         ctx.scissor_stack[ctx.scissor_stack_depth] = actual_rect;
@@ -833,17 +980,184 @@ ui_cmd_scissor_pop :: () {
         cmd: UI_Draw_Cmd;
         cmd.type = .SCISSOR_PUSH;
         cmd.scissor_rect = parent_scissor;
-        array_add(*ctx.draw_commands, cmd);
+        ui_add_draw_cmd(cmd);
     } else {
         cmd: UI_Draw_Cmd;
         cmd.type = .SCISSOR_POP;
-        array_add(*ctx.draw_commands, cmd);
+        ui_add_draw_cmd(cmd);
     }
 }
 
 // render backend
 
-ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
+ui_render_batch_reset :: (batch: *UI_Render_Batch) {
+    batch.type = .NONE;
+    array_reset_keeping_memory(*batch.indices);
+    array_reset_keeping_memory(*batch.positions);
+    array_reset_keeping_memory(*batch.rgba_colors);
+    array_reset_keeping_memory(*batch.texture_coordinates);
+}
+
+ui_render_batch_deinit :: (batch: *UI_Render_Batch) {
+    array_free(batch.indices);
+    array_free(batch.positions);
+    array_free(batch.rgba_colors);
+    array_free(batch.texture_coordinates);
+}
+
+ui_frame_draw_buffers_reset :: (buffers: *UI_Frame_Draw_Buffers) {
+    array_reset_keeping_memory(*buffers.commands);
+    array_reset_keeping_memory(*buffers.geometry_indices);
+    array_reset_keeping_memory(*buffers.geometry_positions);
+    array_reset_keeping_memory(*buffers.geometry_rgba_colors);
+    array_reset_keeping_memory(*buffers.text_indices);
+    array_reset_keeping_memory(*buffers.text_positions);
+    array_reset_keeping_memory(*buffers.text_texture_coordinates);
+}
+
+ui_frame_draw_buffers_deinit :: (buffers: *UI_Frame_Draw_Buffers) {
+    array_free(buffers.commands);
+    array_free(buffers.geometry_indices);
+    array_free(buffers.geometry_positions);
+    array_free(buffers.geometry_rgba_colors);
+    array_free(buffers.text_indices);
+    array_free(buffers.text_positions);
+    array_free(buffers.text_texture_coordinates);
+}
+
+ui_flush_render_batch :: (batch: *UI_Render_Batch) {
+    ctx := ui_ctx;
+    if batch.type == .NONE || batch.indices.count == 0 {
+        ui_render_batch_reset(batch);
+        return;
+    }
+
+    if batch.type == {
+        case .GEOMETRY;
+            glUseProgram(ctx.rect_renderer.shader_program_gl_handle);
+            set_aspect_ratio_uniform(ctx.rect_renderer, .{1.0, 1.0});
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            immediate_render(ctx.rect_renderer, batch.indices, batch.positions, batch.rgba_colors);
+
+        case .TEXT;
+            glUseProgram(ctx.msdf_renderer.shader_program_gl_handle);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, ctx.font.texture_id);
+
+            set_texture_sampler_uniform(ctx.msdf_renderer, 0);
+            set_rgba_color_uniform(ctx.msdf_renderer, batch.text_color);
+            set_aspect_ratio_uniform(ctx.msdf_renderer, .{1.0, 1.0});
+
+            px_range := msdf_screen_pixels_per_distance_range(ctx.font, batch.text_font_size);
+            set_screen_pixels_per_distance_range_uniform(ctx.msdf_renderer, px_range);
+
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            immediate_render(ctx.msdf_renderer, batch.indices, batch.positions, batch.texture_coordinates);
+    }
+
+    ui_render_batch_reset(batch);
+}
+
+ui_render_batch_has_room :: (batch: *UI_Render_Batch, vertex_count: s64, index_count: s64) -> bool {
+    return batch.positions.count + vertex_count <= UI_RENDER_BATCH_MAX_VERTICES &&
+           batch.indices.count   + index_count  <= UI_RENDER_BATCH_MAX_INDICES;
+}
+
+ui_render_batch_append_geometry :: (batch: *UI_Render_Batch, cmd: UI_Draw_Cmd) {
+    vertex_offset := cast(u32) batch.positions.count;
+
+    for cmd.positions    array_add(*batch.positions, it);
+    for cmd.rgba_colors  array_add(*batch.rgba_colors, it);
+    for cmd.indices      array_add(*batch.indices, vertex_offset + it);
+}
+
+ui_render_batch_append_geometry_range :: (batch: *UI_Render_Batch, buffers: *UI_Frame_Draw_Buffers, cmd: UI_Draw_Cmd) {
+    vertex_offset := cast(u32) batch.positions.count;
+
+    array_reserve(*batch.positions, batch.positions.count + cmd.vertex_count);
+    array_reserve(*batch.rgba_colors, batch.rgba_colors.count + cmd.vertex_count);
+    array_reserve(*batch.indices, batch.indices.count + cmd.index_count);
+
+    for i : 0..cmd.vertex_count-1 {
+        array_add(*batch.positions, buffers.geometry_positions[cmd.vertex_offset + i]);
+        array_add(*batch.rgba_colors, buffers.geometry_rgba_colors[cmd.vertex_offset + i]);
+    }
+
+    for i : 0..cmd.index_count-1 {
+        index := buffers.geometry_indices[cmd.index_offset + i];
+        array_add(*batch.indices, vertex_offset + index - cast(u32) cmd.vertex_offset);
+    }
+}
+
+ui_render_batch_append_text :: (batch: *UI_Render_Batch, cmd: UI_Draw_Cmd) {
+    msdf_append_text_geometry(
+        ui_ctx.font,
+        cmd.text,
+        cmd.text_x,
+        cmd.text_y,
+        cmd.font_size,
+        ui_ctx.window_w,
+        ui_ctx.window_h,
+        *batch.positions,
+        *batch.texture_coordinates,
+        *batch.indices
+    );
+}
+
+ui_render_batch_append_text_range :: (batch: *UI_Render_Batch, buffers: *UI_Frame_Draw_Buffers, cmd: UI_Draw_Cmd) {
+    vertex_offset := cast(u32) batch.positions.count;
+
+    array_reserve(*batch.positions, batch.positions.count + cmd.vertex_count);
+    array_reserve(*batch.texture_coordinates, batch.texture_coordinates.count + cmd.vertex_count);
+    array_reserve(*batch.indices, batch.indices.count + cmd.index_count);
+
+    for i : 0..cmd.vertex_count-1 {
+        array_add(*batch.positions, buffers.text_positions[cmd.vertex_offset + i]);
+        array_add(*batch.texture_coordinates, buffers.text_texture_coordinates[cmd.vertex_offset + i]);
+    }
+
+    for i : 0..cmd.index_count-1 {
+        index := buffers.text_indices[cmd.index_offset + i];
+        array_add(*batch.indices, vertex_offset + index - cast(u32) cmd.vertex_offset);
+    }
+}
+
+ui_upload_geometry_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
+    ctx := ui_ctx;
+    if buffers.geometry_indices.count == 0 return;
+
+    glBindVertexArray(ctx.rect_renderer.immediate_vertex_attribute_array_gl_handle);
+
+    glBindBuffer(GL_ARRAY_BUFFER, ctx.rect_renderer.immediate_positions_buffer_gl_handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.geometry_positions.count * size_of(Vector3), buffers.geometry_positions.data);
+
+    glBindBuffer(GL_ARRAY_BUFFER, ctx.rect_renderer.immediate_passthrough_rgba_colors_buffer_gl_handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.geometry_rgba_colors.count * size_of(Vector4), buffers.geometry_rgba_colors.data);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.rect_renderer.immediate_index_buffer_gl_handle);
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, buffers.geometry_indices.count * size_of(u32), buffers.geometry_indices.data);
+}
+
+ui_upload_text_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
+    ctx := ui_ctx;
+    if buffers.text_indices.count == 0 return;
+
+    glBindVertexArray(ctx.msdf_renderer.immediate_vertex_attribute_array_gl_handle);
+
+    glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_positions_buffer_gl_handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_positions.count * size_of(Vector3), buffers.text_positions.data);
+
+    glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_texture_coordinates_buffer_gl_handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_texture_coordinates.count * size_of(Vector2), buffers.text_texture_coordinates.data);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, buffers.text_indices.count * size_of(u32), buffers.text_indices.data);
+}
+
+ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
     ctx := ui_ctx;
 
     // save depth state and disable for UI rendering
@@ -858,29 +1172,61 @@ ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
     // make it so that the ui doesn't write to the depth buffer, is this redundant?
     glDepthMask(GL_FALSE);
 
-    for cmd : commands {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    ui_upload_geometry_draw_buffers(buffers);
+    ui_upload_text_draw_buffers(buffers);
+
+    active_type := UI_Render_Batch_Type.NONE;
+    active_text_font_size: float32 = 0;
+    active_text_color: Vector4;
+
+    for cmd : buffers.commands {
         if cmd.type == {
             case .GEOMETRY;
-                if cmd.indices.count > 0 {
+                if cmd.index_count == 0 continue;
+
+                if active_type != .GEOMETRY {
                     glUseProgram(ctx.rect_renderer.shader_program_gl_handle);
                     set_aspect_ratio_uniform(ctx.rect_renderer, .{1.0, 1.0});
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    immediate_render(ctx.rect_renderer, cmd.indices, cmd.positions, cmd.rgba_colors);
+                    glBindVertexArray(ctx.rect_renderer.immediate_vertex_attribute_array_gl_handle);
+                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.rect_renderer.immediate_index_buffer_gl_handle);
+                    active_type = .GEOMETRY;
                 }
 
+                offset := cmd.index_offset * size_of(u32);
+                glDrawElements(GL_TRIANGLES, xx cmd.index_count, GL_UNSIGNED_INT, cast(*void) offset);
+
             case .TEXT;
-                msdf_draw_text_immediate(
-                    ctx.msdf_renderer,
-                    ctx.font,
-                    cmd.text,
-                    cmd.text_x,
-                    cmd.text_y,
-                    cmd.font_size,
-                    cmd.color,
-                    ctx.window_w,
-                    ctx.window_h
-                );
+                if cmd.index_count == 0 continue;
+
+                same_text_state := active_type == .TEXT &&
+                                   active_text_font_size == cmd.font_size &&
+                                   ui_color_equal(active_text_color, cmd.color);
+
+                if !same_text_state {
+                    glUseProgram(ctx.msdf_renderer.shader_program_gl_handle);
+                    glBindVertexArray(ctx.msdf_renderer.immediate_vertex_attribute_array_gl_handle);
+                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
+
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, ctx.font.texture_id);
+
+                    set_texture_sampler_uniform(ctx.msdf_renderer, 0);
+                    set_rgba_color_uniform(ctx.msdf_renderer, cmd.color);
+                    set_aspect_ratio_uniform(ctx.msdf_renderer, .{1.0, 1.0});
+
+                    px_range := msdf_screen_pixels_per_distance_range(ctx.font, cmd.font_size);
+                    set_screen_pixels_per_distance_range_uniform(ctx.msdf_renderer, px_range);
+
+                    active_type = .TEXT;
+                    active_text_font_size = cmd.font_size;
+                    active_text_color = cmd.color;
+                }
+
+                offset := cmd.index_offset * size_of(u32);
+                glDrawElements(GL_TRIANGLES, xx cmd.index_count, GL_UNSIGNED_INT, cast(*void) offset);
 
             case .SCISSOR_PUSH;
                 glEnable(GL_SCISSOR_TEST);
@@ -897,6 +1243,9 @@ ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
         }
     }
 
+    glBindVertexArray(0);
+    glUseProgram(0);
+
     // restore depth state
     if depth_test_was_enabled {
         glEnable(GL_DEPTH_TEST);
@@ -909,12 +1258,12 @@ ui_flush_command_list :: (commands: [] UI_Draw_Cmd) {
 ui_flush_draw_commands :: () {
     ctx := ui_ctx;
 
-    ui_flush_command_list(ctx.draw_commands);
+    ui_flush_command_list(*ctx.draw_buffers);
 
     // render overlay on top with no scissor
-    if ctx.overlay_draw_commands.count > 0 {
+    if ctx.overlay_draw_buffers.commands.count > 0 {
         glDisable(GL_SCISSOR_TEST);
-        ui_flush_command_list(ctx.overlay_draw_commands);
+        ui_flush_command_list(*ctx.overlay_draw_buffers);
     }
 }
 

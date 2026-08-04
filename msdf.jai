@@ -175,17 +175,18 @@ deinit :: (font: *MSDF_Font) {
 
 // geometry
 
-msdf_generate_text_geometry :: (
+msdf_append_text_geometry :: (
     font: *MSDF_Font,
     text: string,
     left_edge_x_px: float32,
     baseline_y_px: float32,
     font_size_px: float32,
     window_w: float32,
-    window_h: float32
-) -> MSDF_Text_Geometry, total_advance_px : float32 {
-
-    geometry: MSDF_Text_Geometry;
+    window_h: float32,
+    positions: *[..] Vector3,
+    texture_coordinates: *[..] Vector2,
+    indices: *[..] u32
+) -> total_advance_px : float32 {
     cursor_x_px := left_edge_x_px;
     scale := font_size_px;
 
@@ -196,11 +197,11 @@ msdf_generate_text_geometry :: (
         if glyph_ptr != null && glyph_ptr.has_geometry  visible_count += 1;
     }
 
-    array_reserve(*geometry.positions, visible_count * 4);
-    array_reserve(*geometry.texture_coordinates, visible_count * 4);
-    array_reserve(*geometry.indices, visible_count * 6);
+    array_reserve(positions, positions.count + visible_count * 4);
+    array_reserve(texture_coordinates, texture_coordinates.count + visible_count * 4);
+    array_reserve(indices, indices.count + visible_count * 6);
 
-    vertex_index: u32 = 0;
+    vertex_index := cast(u32) positions.count;
 
     for i : 0..text.count-1 {
         cp := cast(u32) text[i];
@@ -242,23 +243,23 @@ msdf_generate_text_geometry :: (
                 v1 = 1.0 - glyph.atlas_bottom_px / font.atlas_h_px;
             }
 
-            array_add(*geometry.positions, .{ndc_left,  ndc_top,    0});
-            array_add(*geometry.positions, .{ndc_right, ndc_top,    0});
-            array_add(*geometry.positions, .{ndc_right, ndc_bottom, 0});
-            array_add(*geometry.positions, .{ndc_left,  ndc_bottom, 0});
+            array_add(positions, .{ndc_left,  ndc_top,    0});
+            array_add(positions, .{ndc_right, ndc_top,    0});
+            array_add(positions, .{ndc_right, ndc_bottom, 0});
+            array_add(positions, .{ndc_left,  ndc_bottom, 0});
 
-            array_add(*geometry.texture_coordinates, .{u0, v1});
-            array_add(*geometry.texture_coordinates, .{u1, v1});
-            array_add(*geometry.texture_coordinates, .{u1, v0});
-            array_add(*geometry.texture_coordinates, .{u0, v0});
+            array_add(texture_coordinates, .{u0, v1});
+            array_add(texture_coordinates, .{u1, v1});
+            array_add(texture_coordinates, .{u1, v0});
+            array_add(texture_coordinates, .{u0, v0});
 
-            array_add(*geometry.indices, vertex_index + 0);
-            array_add(*geometry.indices, vertex_index + 2);
-            array_add(*geometry.indices, vertex_index + 1);
+            array_add(indices, vertex_index + 0);
+            array_add(indices, vertex_index + 2);
+            array_add(indices, vertex_index + 1);
 
-            array_add(*geometry.indices, vertex_index + 0);
-            array_add(*geometry.indices, vertex_index + 3);
-            array_add(*geometry.indices, vertex_index + 2);
+            array_add(indices, vertex_index + 0);
+            array_add(indices, vertex_index + 3);
+            array_add(indices, vertex_index + 2);
 
             vertex_index += 4;
         }
@@ -266,7 +267,34 @@ msdf_generate_text_geometry :: (
         cursor_x_px += glyph.advance_em * scale;
     }
 
-    return geometry, cursor_x_px - left_edge_x_px;
+    return cursor_x_px - left_edge_x_px;
+}
+
+msdf_generate_text_geometry :: (
+    font: *MSDF_Font,
+    text: string,
+    left_edge_x_px: float32,
+    baseline_y_px: float32,
+    font_size_px: float32,
+    window_w: float32,
+    window_h: float32
+) -> MSDF_Text_Geometry, total_advance_px : float32 {
+
+    geometry: MSDF_Text_Geometry;
+    total_advance_px = msdf_append_text_geometry(
+        font,
+        text,
+        left_edge_x_px,
+        baseline_y_px,
+        font_size_px,
+        window_w,
+        window_h,
+        *geometry.positions,
+        *geometry.texture_coordinates,
+        *geometry.indices
+    );
+
+    return geometry, total_advance_px;
 }
 
 msdf_text_geometry_free :: (geometry: *MSDF_Text_Geometry) {
@@ -330,10 +358,7 @@ msdf_draw_text_immediate :: (
     set_aspect_ratio_uniform(renderer, .{1.0, 1.0});
     px_range := msdf_screen_pixels_per_distance_range(font, font_size_px);
 
-    glUniform1f(
-        glGetUniformLocation(renderer.shader_program_gl_handle, "screen_pixels_per_distance_range"),
-        px_range
-    );
+    set_screen_pixels_per_distance_range_uniform(renderer, px_range);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
