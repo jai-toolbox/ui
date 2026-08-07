@@ -1,4 +1,6 @@
 
+#import "File";
+
 
 // label
 
@@ -920,10 +922,40 @@ ui_unindent :: () {
 
 // windows / panels
 
+ui_window_id :: (title: string) -> UI_Id {
+    return ui_hash_fnv1a(title);
+}
+
+ui_window_snap_rect_for_mouse :: (mouse_x: float32, mouse_y: float32) -> UI_Rect, bool {
+    ctx := ui_ctx;
+
+    hotspot: float32 = 48.0;
+    area := ctx.work_area;
+    w := area.w;
+    h := area.h;
+
+    near_left   := mouse_x <= area.x + hotspot;
+    near_right  := mouse_x >= area.x + w - hotspot;
+    near_top    := mouse_y <= area.y + hotspot;
+    near_bottom := mouse_y >= area.y + h - hotspot;
+
+    if near_left && near_top       return .{area.x, area.y, w * 0.5, h * 0.5}, true;
+    if near_right && near_top      return .{area.x + w * 0.5, area.y, w * 0.5, h * 0.5}, true;
+    if near_left && near_bottom    return .{area.x, area.y + h * 0.5, w * 0.5, h * 0.5}, true;
+    if near_right && near_bottom   return .{area.x + w * 0.5, area.y + h * 0.5, w * 0.5, h * 0.5}, true;
+
+    if near_left    return .{area.x, area.y, w * 0.5, h}, true;
+    if near_right   return .{area.x + w * 0.5, area.y, w * 0.5, h}, true;
+    if near_top     return .{area.x, area.y, w, h * 0.5}, true;
+    if near_bottom  return .{area.x, area.y + h * 0.5, w, h * 0.5}, true;
+
+    return .{}, false;
+}
+
 ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 = 50, default_w: float32 = 300, default_h: float32 = 400) -> bool {
     ctx := ui_ctx;
     style := *ctx.style;
-    id := ui_get_id(title);
+    id := ui_window_id(title);
 
     state_ptr := table_find_pointer(*ctx.window_states, id);
     if state_ptr == null {
@@ -957,6 +989,15 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
         state_ptr.rect.y += ctx.mouse.dy;
         win = state_ptr.rect;
         title_rect = .{win.x, win.y, win.w, title_h};
+    }
+
+    if ui_is_active(title_id) && ctx.mouse.left_released {
+        snap_rect, should_snap := ui_window_snap_rect_for_mouse(ctx.mouse.x, ctx.mouse.y);
+        if should_snap {
+            state_ptr.rect = snap_rect;
+            win = state_ptr.rect;
+            title_rect = .{win.x, win.y, win.w, title_h};
+        }
     }
 
     // collapse on right-click
@@ -1043,6 +1084,12 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
         state_ptr.rect.h += ctx.mouse.dy;
         if state_ptr.rect.w < 100  state_ptr.rect.w = 100;
         if state_ptr.rect.h < title_h + 50  state_ptr.rect.h = title_h + 50;
+
+        area := ctx.work_area;
+        max_w := area.x + area.w - state_ptr.rect.x;
+        max_h := area.y + area.h - state_ptr.rect.y;
+        if state_ptr.rect.w > max_w  state_ptr.rect.w = max(100.0, max_w);
+        if state_ptr.rect.h > max_h  state_ptr.rect.h = max(title_h + 50, max_h);
     }
 
     // draw resize grip triangle in bottom-right corner
@@ -1495,7 +1542,7 @@ ui_debug_overlay :: () {
 // open/close window programmatically
 
 ui_set_window_open :: (title: string, open: bool) {
-    id := ui_get_id(title);
+    id := ui_window_id(title);
     state_ptr := table_find_pointer(*ui_ctx.window_states, id);
     if state_ptr != null {
         state_ptr.open = open;
@@ -1503,10 +1550,62 @@ ui_set_window_open :: (title: string, open: bool) {
 }
 
 ui_is_window_open :: (title: string) -> bool {
-    id := ui_get_id(title);
+    id := ui_window_id(title);
     state_ptr := table_find_pointer(*ui_ctx.window_states, id);
     if state_ptr != null return state_ptr.open;
     return true;
+}
+
+ui_window_title_id :: (title: string) -> UI_Id {
+    return ui_hash_fnv1a("#title", ui_window_id(title));
+}
+
+ui_window_rect :: (title: string) -> UI_Rect, bool {
+    id := ui_window_id(title);
+    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
+    if state_ptr == null return .{}, false;
+    return state_ptr.rect, state_ptr.open;
+}
+
+ui_window_title_rect :: (title: string) -> UI_Rect, bool {
+    rect, ok := ui_window_rect(title);
+    if !ok return .{}, false;
+    return .{rect.x, rect.y, rect.w, ui_ctx.style.window_title_height}, true;
+}
+
+ui_window_title_is_active :: (title: string) -> bool {
+    return ui_ctx.active == ui_window_title_id(title);
+}
+
+ui_window_title_released_over :: (dragged_title: string, target_title: string) -> bool {
+    if !ui_window_title_is_active(dragged_title) || !ui_ctx.mouse.left_released return false;
+    target_rect, ok := ui_window_title_rect(target_title);
+    if !ok return false;
+    return rect_contains(target_rect, ui_ctx.mouse.x, ui_ctx.mouse.y);
+}
+
+ui_window_z_order :: (title: string) -> s32 {
+    id := ui_window_id(title);
+    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
+    if state_ptr == null return -1;
+    return state_ptr.z_order;
+}
+
+ui_window_force_front :: (title: string) {
+    id := ui_window_id(title);
+    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
+    if state_ptr != null {
+        state_ptr.z_order = ui_ctx.next_z_order;
+        ui_ctx.next_z_order += 1;
+    }
+}
+
+ui_window_set_rect :: (title: string, rect: UI_Rect) {
+    id := ui_window_id(title);
+    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
+    if state_ptr != null {
+        state_ptr.rect = rect;
+    }
 }
 
 
@@ -1710,6 +1809,12 @@ UI_File_Select_Entry :: struct {
     is_directory: bool;
 }
 
+UI_File_Create_Mode :: enum {
+    NONE;
+    FILE;
+    DIRECTORY;
+}
+
 UI_File_Select_State :: struct {
     current_directory: string;
     entries: [..] UI_File_Select_Entry;
@@ -1722,6 +1827,10 @@ UI_File_Select_State :: struct {
 
     initialized: bool;
     needs_refresh: bool;
+    show_dotfiles: bool;
+    create_mode: UI_File_Create_Mode;
+    create_name_buffer: [256] u8;
+    create_name_length: s32;
     had_error: bool;
     error_message: string;
 }
@@ -1737,6 +1846,16 @@ ui_file_select_free_entries :: (state: *UI_File_Select_State) {
 ui_file_select_set_selected_path :: (state: *UI_File_Select_State, path: string) {
     if state.selected_path.count  free(state.selected_path);
     state.selected_path = copy_string(path);
+}
+
+ui_file_select_set_error :: (state: *UI_File_Select_State, message: string) {
+    if state.error_message.count  free(state.error_message);
+    state.error_message = copy_string(message);
+    state.had_error = message.count > 0;
+}
+
+ui_file_select_clear_error :: (state: *UI_File_Select_State) {
+    ui_file_select_set_error(state, "");
 }
 
 ui_file_select_sync_path_buffer :: (state: *UI_File_Select_State) {
@@ -1819,14 +1938,103 @@ ui_file_select_parent_directory :: (directory: string) -> string {
     return parent;
 }
 
+ui_file_select_join_path :: (directory: string, name: string) -> string {
+    if directory.count == 0 return copy_string(name);
+    if directory[directory.count - 1] == #char "/" || directory[directory.count - 1] == #char "\\" {
+        return tprint("%%", directory, name);
+    }
+    return tprint("%/%", directory, name);
+}
+
+ui_file_select_name_is_valid :: (name: string) -> bool {
+    if name.count == 0 return false;
+    if name == "." || name == ".." return false;
+
+    for i: 0..name.count-1 {
+        if name[i] == #char "/" || name[i] == #char "\\" return false;
+    }
+
+    return true;
+}
+
+ui_file_select_begin_create :: (state: *UI_File_Select_State, mode: UI_File_Create_Mode) {
+    state.create_mode = mode;
+    state.create_name_length = 0;
+    state.create_name_buffer[0] = 0;
+
+    title := ifx mode == .DIRECTORY then "New Directory" else "New File";
+    ui_set_window_open(title, true);
+}
+
+ui_file_select_finish_create :: (state: *UI_File_Select_State) -> bool {
+    name: string;
+    name.data = state.create_name_buffer.data;
+    name.count = state.create_name_length;
+
+    if !ui_file_select_name_is_valid(name) {
+        ui_file_select_set_error(state, "Use a simple name without slashes.");
+        return false;
+    }
+
+    new_path := ui_file_select_join_path(state.current_directory, name);
+
+    ok := false;
+    if state.create_mode == .DIRECTORY {
+        ok = make_directory_if_it_does_not_exist(new_path, recursive = false);
+    } else if state.create_mode == .FILE {
+        if file_exists(new_path) {
+            ui_file_select_set_error(state, tprint("Already exists: %", new_path));
+            return false;
+        }
+        ok = write_entire_file(new_path, "");
+    }
+
+    if !ok {
+        ui_file_select_set_error(state, tprint("Could not create: %", new_path));
+        return false;
+    }
+
+    ui_file_select_clear_error(state);
+    state.needs_refresh = true;
+
+    if state.create_mode == .FILE {
+        ui_file_select_set_selected_path(state, new_path);
+    }
+
+    state.create_mode = .NONE;
+    return true;
+}
+
+ui_file_select_create_dialog :: (state: *UI_File_Select_State) {
+    if state.create_mode == .NONE return;
+
+    title := ifx state.create_mode == .DIRECTORY then "New Directory" else "New File";
+    if ui_begin_window(title, 460, 140, 340, 150) {
+        ui_text_input("Name", *state.create_name_buffer, *state.create_name_length);
+
+        ui_begin_row();
+        if ui_button("OK") {
+            if ui_file_select_finish_create(state) {
+                ui_set_window_open(title, false);
+            }
+        }
+        ui_end_row();
+
+        ui_end_window();
+    } else if !ui_is_window_open(title) {
+        state.create_mode = .NONE;
+    }
+}
+
 ui_file_select_refresh :: (state: *UI_File_Select_State) {
     ui_file_select_free_entries(state);
-    state.had_error = false;
-    state.error_message = "";
+    ui_file_select_clear_error(state);
     state.selected_index = -1;
     state.needs_refresh = false;
 
-    visitor :: (info: *File_Visit_Info, entries: *[..] UI_File_Select_Entry) {
+    visitor :: (info: *File_Visit_Info, state: *UI_File_Select_State) {
+        if !state.show_dotfiles && info.short_name.count > 0 && info.short_name[0] == #char "." return;
+
         entry: UI_File_Select_Entry;
         entry.name = copy_string(info.short_name);
         entry.full_path = copy_string(info.full_name);
@@ -1834,21 +2042,20 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
         ui_file_select_collapse_drive_root_slashes(*entry.full_path);
         entry.is_directory = info.is_directory;
 
-        array_add(entries, entry);
+        array_add(*state.entries, entry);
         if entry.is_directory {
-            index := entries.count - 1;
-            while index > 0 && !(entries.*)[index - 1].is_directory {
-                (entries.*)[index] = (entries.*)[index - 1];
+            index := state.entries.count - 1;
+            while index > 0 && state.entries[index - 1].is_directory == false {
+                state.entries[index] = state.entries[index - 1];
                 index -= 1;
             }
-            (entries.*)[index] = entry;
+            state.entries[index] = entry;
         }
     }
 
-    ok := visit_files(state.current_directory, false, *state.entries, visitor, visit_files = true, visit_directories = true, follow_directory_symlinks = false);
+    ok := visit_files(state.current_directory, false, state, visitor, visit_files = true, visit_directories = true, follow_directory_symlinks = false);
     if !ok {
-        state.had_error = true;
-        state.error_message = tprint("Could not open directory: %", state.current_directory);
+        ui_file_select_set_error(state, tprint("Could not open directory: %", state.current_directory));
     }
 }
 
@@ -1878,6 +2085,14 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     changed := false;
 
     ui_begin_row();
+    old_show_dotfiles := state.show_dotfiles;
+    ui_checkbox("Show dotfiles", *state.show_dotfiles);
+    if state.show_dotfiles != old_show_dotfiles {
+        state.needs_refresh = true;
+    }
+    ui_end_row();
+
+    ui_begin_row();
     if ui_button("Go") {
         edited_path: string;
         edited_path.data = state.path_buffer.data;
@@ -1890,6 +2105,15 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     }
     if ui_button("Refresh") {
         state.needs_refresh = true;
+    }
+    ui_end_row();
+
+    ui_begin_row();
+    if ui_button("New File") {
+        ui_file_select_begin_create(state, .FILE);
+    }
+    if ui_button("New Directory") {
+        ui_file_select_begin_create(state, .DIRECTORY);
     }
     ui_end_row();
 
@@ -1922,7 +2146,7 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     }
 
     ui_begin_row();
-    if ui_button("Select") {
+    if ui_button("Open") {
         if state.selected_path.count > 0 {
             changed = true;
         }
@@ -1940,6 +2164,7 @@ ui_file_select_destroy :: (state: *UI_File_Select_State) {
     ui_file_select_free_entries(state);
     if state.current_directory.count  free(state.current_directory);
     if state.selected_path.count      free(state.selected_path);
+    if state.error_message.count      free(state.error_message);
     state.* = .{};
 }
 

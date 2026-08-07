@@ -5,6 +5,8 @@
 #import "File";
 #import "File_Utilities";
 
+#import "tbx/opengl";
+
 #load "msdf.jai";
 
 // identity
@@ -73,6 +75,8 @@ UI_Key :: enum {
     DELETE;
     LEFT;
     RIGHT;
+    UP;
+    DOWN;
     HOME;
     END;
     ENTER;
@@ -98,6 +102,7 @@ UI_Keyboard_State :: struct {
 UI_Draw_Cmd_Type :: enum {
     GEOMETRY;
     TEXT;
+    TEXTURE;
     SCISSOR_PUSH;
     SCISSOR_POP;
 }
@@ -120,11 +125,18 @@ UI_Draw_Cmd :: struct {
     text_y:    float32;
     font_size: float32;
     color:     Vector4;
+    font_override: *MSDF_Font;
+
+    // TEXTURE
+    texture_id:   GLuint;
+    texture_rect: UI_Rect;
+    texture_tint: Vector4;
 
     // SCISSOR
     scissor_rect: UI_Rect;
 }
 
+<<<<<<< Updated upstream
 UI_RENDER_BATCH_MAX_VERTICES :: 65536;
 UI_RENDER_BATCH_MAX_INDICES  :: 65536;
 
@@ -160,6 +172,17 @@ UI_Frame_Draw_Buffers :: struct {
 
 ui_color_equal :: (a: Vector4, b: Vector4) -> bool {
     return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+=======
+UI_Texture_Renderer :: struct {
+    shader_program: GLuint;
+    vao: GLuint;
+    index_buffer: GLuint;
+    position_buffer: GLuint;
+    uv_buffer: GLuint;
+    texture_uniform_location: GLint = -1;
+    tint_uniform_location: GLint = -1;
+    initialized: bool;
+>>>>>>> Stashed changes
 }
 
 // audio events
@@ -374,11 +397,13 @@ UI_Context :: struct {
 
     window_w: float32;
     window_h: float32;
+    work_area: UI_Rect;
 
     // could be extracted out so people can do their own impl, but until that request is made, this remains.
     font:          *MSDF_Font;
     msdf_renderer: *Multi_Channel_Signed_Distance_Field_Text_Renderer;
     rect_renderer: *Absolute_Position_Color_Alpha_Renderer;
+    texture_renderer: UI_Texture_Renderer;
 
     window_states:     Table(UI_Id, UI_Window_State);
     text_input_states: Table(UI_Id, UI_Text_Input_State);
@@ -400,6 +425,76 @@ UI_Context :: struct {
 
     audio_events:      [MAX_AUDIO_EVENTS_PER_FRAME] UI_Audio_Event;
     audio_event_count: s32;
+}
+
+UI_TEXTURE_VERTEX_SHADER :: #string END
+#version 150 core
+in vec3 position;
+in vec2 uv;
+out vec2 passthrough_uv;
+
+void main() {
+    passthrough_uv = uv;
+    gl_Position = vec4(position, 1.0);
+}
+END
+
+UI_TEXTURE_FRAGMENT_SHADER :: #string END
+#version 150 core
+uniform sampler2D image_texture;
+uniform vec4 tint;
+in vec2 passthrough_uv;
+out vec4 out_color;
+
+void main() {
+    out_color = texture(image_texture, passthrough_uv) * tint;
+}
+END
+
+ui_texture_renderer_init :: (renderer: *UI_Texture_Renderer) {
+    ok: bool;
+    renderer.shader_program, ok = create_shader_program(UI_TEXTURE_VERTEX_SHADER, UI_TEXTURE_FRAGMENT_SHADER);
+    assert(ok, "Failed to initialize UI texture shader");
+
+    glGenVertexArrays(1, *renderer.vao);
+    glBindVertexArray(renderer.vao);
+
+    indices := u32.[0, 2, 1, 0, 3, 2];
+    glGenBuffers(1, *renderer.index_buffer);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderer.index_buffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.count * size_of(u32), indices.data, GL_STATIC_DRAW);
+
+    glGenBuffers(1, *renderer.position_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, renderer.position_buffer);
+    glBufferData(GL_ARRAY_BUFFER, 4 * size_of(Vector3), null, GL_STREAM_DRAW);
+    position_location := glGetAttribLocation(renderer.shader_program, "position");
+    glEnableVertexAttribArray(xx position_location);
+    glVertexAttribPointer(xx position_location, 3, GL_FLOAT, GL_FALSE, 0, null);
+
+    glGenBuffers(1, *renderer.uv_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, renderer.uv_buffer);
+    glBufferData(GL_ARRAY_BUFFER, 4 * size_of(Vector2), null, GL_STATIC_DRAW);
+    uvs := Vector2.[.{0, 0}, .{1, 0}, .{1, 1}, .{0, 1}];
+    glBufferSubData(GL_ARRAY_BUFFER, 0, uvs.count * size_of(Vector2), uvs.data);
+    uv_location := glGetAttribLocation(renderer.shader_program, "uv");
+    glEnableVertexAttribArray(xx uv_location);
+    glVertexAttribPointer(xx uv_location, 2, GL_FLOAT, GL_FALSE, 0, null);
+
+    renderer.texture_uniform_location = glGetUniformLocation(renderer.shader_program, "image_texture");
+    renderer.tint_uniform_location = glGetUniformLocation(renderer.shader_program, "tint");
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+    renderer.initialized = true;
+}
+
+ui_texture_renderer_deinit :: (renderer: *UI_Texture_Renderer) {
+    if renderer.shader_program != 0  glDeleteProgram(renderer.shader_program);
+    if renderer.vao != 0             glDeleteVertexArrays(1, *renderer.vao);
+    if renderer.index_buffer != 0    glDeleteBuffers(1, *renderer.index_buffer);
+    if renderer.position_buffer != 0 glDeleteBuffers(1, *renderer.position_buffer);
+    if renderer.uv_buffer != 0       glDeleteBuffers(1, *renderer.uv_buffer);
+    renderer.* = .{};
 }
 
 // global context
@@ -425,10 +520,12 @@ ui_init :: (
     ctx.next_z_order = 0;
     ctx.open_popup_id = UI_ID_NONE;
     ctx.drawing_overlay = false;
+    ui_texture_renderer_init(*ctx.texture_renderer);
     ui_ctx = ctx;
 }
 
 ui_destroy :: (ctx: *UI_Context) {
+    ui_texture_renderer_deinit(*ctx.texture_renderer);
     deinit(*ctx.window_states);
     deinit(*ctx.text_input_states);
     ui_frame_draw_buffers_deinit(*ctx.draw_buffers);
@@ -467,6 +564,7 @@ ui_begin_frame :: (
 
     ctx.window_w = window_w;
     ctx.window_h = window_h;
+    ctx.work_area = .{0, 0, window_w, window_h};
     ctx.dt = dt;
     ctx.time_elapsed += dt;
 
@@ -502,6 +600,10 @@ ui_begin_frame :: (
         indent     = 0,
         content_max_y = 0,
     });
+}
+
+ui_set_work_area :: (rect: UI_Rect) {
+    ui_ctx.work_area = rect;
 }
 
 ui_end_frame :: () {
@@ -946,6 +1048,39 @@ ui_cmd_text :: (text: string, left_edge_x: float32, baseline_y: float32, font_si
     ui_add_draw_cmd(cmd);
 }
 
+ui_cmd_text_font :: (font: *MSDF_Font, text: string, left_edge_x: float32, baseline_y: float32, font_size: float32, color: Vector4) {
+    ctx := ui_ctx;
+    cmd: UI_Draw_Cmd;
+    cmd.type = .TEXT;
+    cmd.text = text;
+    cmd.text_x = left_edge_x;
+    cmd.text_y = baseline_y;
+    cmd.font_size = font_size;
+    cmd.color = color;
+    cmd.font_override = font;
+    if ctx.drawing_overlay {
+        array_add(*ctx.overlay_draw_commands, cmd);
+    } else {
+        array_add(*ctx.draw_commands, cmd);
+    }
+}
+
+ui_cmd_texture :: (texture_id: GLuint, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1}) {
+    if texture_id == 0 || rect.w <= 0 || rect.h <= 0 return;
+
+    ctx := ui_ctx;
+    cmd: UI_Draw_Cmd;
+    cmd.type = .TEXTURE;
+    cmd.texture_id = texture_id;
+    cmd.texture_rect = rect;
+    cmd.texture_tint = tint;
+    if ctx.drawing_overlay {
+        array_add(*ctx.overlay_draw_commands, cmd);
+    } else {
+        array_add(*ctx.draw_commands, cmd);
+    }
+}
+
 ui_cmd_scissor_push :: (rect: UI_Rect) {
     ctx := ui_ctx;
 
@@ -1199,6 +1334,7 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
                 glDrawElements(GL_TRIANGLES, xx cmd.index_count, GL_UNSIGNED_INT, cast(*void) offset);
 
             case .TEXT;
+<<<<<<< Updated upstream
                 if cmd.index_count == 0 continue;
 
                 same_text_state := active_type == .TEXT &&
@@ -1227,6 +1363,44 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
 
                 offset := cmd.index_offset * size_of(u32);
                 glDrawElements(GL_TRIANGLES, xx cmd.index_count, GL_UNSIGNED_INT, cast(*void) offset);
+=======
+                font := ifx cmd.font_override != null then cmd.font_override else ctx.font;
+                msdf_draw_text_immediate(
+                    ctx.msdf_renderer,
+                    font,
+                    cmd.text,
+                    cmd.text_x,
+                    cmd.text_y,
+                    cmd.font_size,
+                    cmd.color,
+                    ctx.window_w,
+                    ctx.window_h
+                );
+>>>>>>> Stashed changes
+
+            case .TEXTURE;
+                renderer := *ctx.texture_renderer;
+                positions, _, _ := ui_make_quad_ndc(cmd.texture_rect, .{1, 1, 1, 1});
+
+                glUseProgram(renderer.shader_program);
+                glBindVertexArray(renderer.vao);
+
+                glBindBuffer(GL_ARRAY_BUFFER, renderer.position_buffer);
+                glBufferSubData(GL_ARRAY_BUFFER, 0, positions.count * size_of(Vector3), positions.data);
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, cmd.texture_id);
+                glUniform1i(renderer.texture_uniform_location, 0);
+                glUniform4f(renderer.tint_uniform_location, cmd.texture_tint.x, cmd.texture_tint.y, cmd.texture_tint.z, cmd.texture_tint.w);
+
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+                glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, cast(*void) 0);
+
+                glBindVertexArray(0);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                glUseProgram(0);
 
             case .SCISSOR_PUSH;
                 glEnable(GL_SCISSOR_TEST);
