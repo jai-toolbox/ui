@@ -1418,6 +1418,12 @@ ui_upload_text_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
     ctx := ui_ctx;
     if buffers.text_indices.count == 0 return;
 
+    if buffers.text_positions.count > UI_RENDER_BATCH_MAX_VERTICES ||
+       buffers.text_indices.count > UI_RENDER_BATCH_MAX_INDICES {
+        log_error("UI text upload exceeded immediate buffer: vertices=%, indices=%", buffers.text_positions.count, buffers.text_indices.count);
+        return;
+    }
+
     glBindVertexArray(ctx.msdf_renderer.immediate_vertex_attribute_array_gl_handle);
 
     glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_positions_buffer_gl_handle);
@@ -1502,6 +1508,8 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
 
                 font := ifx cmd.font_override != null then cmd.font_override else ctx.font;
                 same_text_state := active_type == .TEXT &&
+                                   font == ctx.font &&
+                                   cmd.font_override == null &&
                                    active_text_font_size == cmd.font_size &&
                                    active_text_font == font &&
                                    ui_color_equal(active_text_color, cmd.color);
