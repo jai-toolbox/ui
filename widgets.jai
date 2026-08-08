@@ -861,6 +861,7 @@ ui_begin_row :: () {
         origin_y   = layout.cursor_y,
         max_w      = layout.max_w - layout.indent,
         max_h      = layout.max_h,
+        visible_h  = layout.visible_h - (layout.cursor_y - layout.origin_y),
         row_height = 0,
         indent     = 0,
         content_max_y = 0,
@@ -889,6 +890,7 @@ ui_begin_column :: (width: float32 = 0) {
         origin_y   = layout.cursor_y,
         max_w      = w,
         max_h      = layout.max_h,
+        visible_h  = layout.visible_h - (layout.cursor_y - layout.origin_y),
         row_height = 0,
         indent     = 0,
         content_max_y = 0,
@@ -1180,6 +1182,7 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
         origin_y   = content_area.y - state_ptr.scroll_y,
         max_w      = content_area.w,
         max_h      = content_area.h + state_ptr.content_h,
+        visible_h  = content_area.h,
         row_height = 0,
         indent     = 0,
         content_max_y = 0,
@@ -1255,6 +1258,7 @@ ui_begin_panel :: (label: string, height: float32 = 0) {
         origin_y   = inner.y,
         max_w      = inner.w,
         max_h      = inner.h,
+        visible_h  = inner.h,
         row_height = 0,
         indent     = 0,
         content_max_y = 0,
@@ -1305,6 +1309,7 @@ ui_begin_scroll_region :: (label: string, height: float32) -> float32 {
         origin_y   = rect.y - state_ptr.scroll_y,
         max_w      = rect.w - style.padding * 2 - style.scrollbar_width,
         max_h      = rect.h + state_ptr.content_h,
+        visible_h  = rect.h,
         row_height = 0,
         indent     = 0,
         content_max_y = 0,
@@ -1513,6 +1518,75 @@ ui_image_placeholder :: (label: string, width: float32, height: float32, tint: V
     text_x := ui_text_centered_x(rect, label, ui_ctx.style.font_size);
     text_y := ui_text_baseline_y(rect, ui_ctx.style.font_size);
     ui_cmd_text(label, text_x, text_y, ui_ctx.style.font_size, ui_ctx.style.color_text_disabled);
+}
+
+ui_image :: (texture_id: GLuint, width: float32, height: float32, tint: Vector4 = .{1, 1, 1, 1}) -> UI_Rect {
+    rect := ui_allocate_rect(width, height);
+    ui_cmd_image(texture_id, rect, tint);
+    return rect;
+}
+
+ui_render_target_view :: (target: *UI_Render_Target, width: float32, height: float32, tint: Vector4 = .{1, 1, 1, 1}) -> UI_Rect {
+    rect := ui_allocate_rect(width, height);
+    target_w := cast(s32) max(width, 1);
+    target_h := cast(s32) max(height, 1);
+
+    if ui_render_target_ensure_size(target, target_w, target_h) {
+        ui_cmd_image(target.color_texture, rect, tint);
+    } else {
+        ui_cmd_rect(rect, .{0.16, 0.05, 0.05, 1.0});
+    }
+
+    ui_cmd_rect_outline(rect, ui_ctx.style.color_border);
+    return rect;
+}
+
+ui_render_target_view_fill :: (label: string, target: *UI_Render_Target, min_height: float32 = 32, tint: Vector4 = .{1, 1, 1, 1}) -> UI_Render_Target_View_Input {
+    ctx := ui_ctx;
+
+    width := ui_available_width();
+    height := ui_available_height();
+    if height < min_height height = min_height;
+
+    rect := ui_allocate_rect(width, height);
+    target_w := cast(s32) max(rect.w, 1);
+    target_h := cast(s32) max(rect.h, 1);
+
+    if ui_render_target_ensure_size(target, target_w, target_h) {
+        ui_cmd_image(target.color_texture, rect, tint);
+    } else {
+        ui_cmd_rect(rect, .{0.16, 0.05, 0.05, 1.0});
+    }
+
+    ui_cmd_rect_outline(rect, ctx.style.color_border);
+
+    id := ui_get_id(label);
+    hovered := ui_try_hot(id, rect);
+    if hovered && ctx.mouse.left_pressed {
+        ctx.focused = id;
+    }
+    ui_try_active(id);
+
+    result: UI_Render_Target_View_Input;
+    result.rect = rect;
+    result.hovered = hovered;
+    result.active = ui_is_active(id);
+    result.focused = ui_is_focused(id);
+    result.local_mouse_x = clamp(ctx.mouse.x - rect.x, 0.0, rect.w);
+    result.local_mouse_y = clamp(ctx.mouse.y - rect.y, 0.0, rect.h);
+    result.normalized_mouse_x = ifx rect.w > 0 then result.local_mouse_x / rect.w else 0;
+    result.normalized_mouse_y = ifx rect.h > 0 then result.local_mouse_y / rect.h else 0;
+    result.left_down = (result.hovered || result.active) && ctx.mouse.left_down;
+    result.left_pressed = result.hovered && ctx.mouse.left_pressed;
+    result.left_released = (result.hovered || result.active) && ctx.mouse.left_released;
+    result.right_down = result.hovered && ctx.mouse.right_down;
+    result.right_pressed = result.hovered && ctx.mouse.right_pressed;
+    result.right_released = result.hovered && ctx.mouse.right_released;
+    result.scroll_y = ifx result.hovered then ctx.mouse.scroll_y else 0;
+    result.target_width = target.width;
+    result.target_height = target.height;
+
+    return result;
 }
 
 ui_same_line :: (spacing: float32 = -1) {
