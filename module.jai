@@ -4,6 +4,8 @@
 #import "GL";
 #import "File";
 #import "File_Utilities";
+#import "System";
+#import "String";
 
 #import "tbx/opengl";
 
@@ -81,11 +83,12 @@ UI_Key :: enum {
     END;
     ENTER;
     ESCAPE;
+    SPACE;
     TAB;
 
-    // used for text editing ctrl-(a/c/v/x/z)
-    // all, copy, paste, cut undo
-    A; C; V; X; Z;
+    // used for text editing ctrl-(a/c/v/x/z/y)
+    // all, copy, paste, cut, undo, redo
+    A; C; V; X; Z; Y;
 }
 
 UI_Keyboard_State :: struct {
@@ -123,6 +126,7 @@ UI_Draw_Cmd :: struct {
     text:      string;
     text_x:    float32;
     text_y:    float32;
+    font:      *MSDF_Font;
     font_size: float32;
     color:     Vector4;
     font_override: *MSDF_Font;
@@ -154,6 +158,7 @@ UI_Render_Batch :: struct {
     texture_coordinates: [..] Vector2;
 
     text_font_size: float32;
+    text_font: *MSDF_Font;
     text_color: Vector4;
     text_font: *MSDF_Font;
 }
@@ -383,6 +388,7 @@ UI_Window_State :: struct {
     scroll_y:   float32;
     content_h:  float32;
     open:       bool;
+    is_window:  bool;
     was_moved:  bool;
     z_order:    s32;
     scroll_region_rect: UI_Rect;  // stored by begin_scroll_region for end to use
@@ -626,6 +632,10 @@ ui_end_frame :: () {
     ctx.keyboard.char_count = 0;
 }
 
+ui_set_work_area :: (rect: UI_Rect) {
+    ui_ctx.work_area = rect;
+}
+
 // keyboard input (call from your event loop)
 
 ui_push_key :: (key: UI_Key) {
@@ -720,7 +730,11 @@ ui_available_width :: () -> float32 {
 
 ui_available_height :: () -> float32 {
     layout := ui_current_layout();
+<<<<<<< Updated upstream
     bottom := layout.origin_y + layout.visible_h;
+=======
+    bottom := layout.origin_y + ifx layout.visible_h > 0 then layout.visible_h else layout.max_h;
+>>>>>>> Stashed changes
     result := bottom - layout.cursor_y;
     if result < 0 return 0;
     return result;
@@ -895,12 +909,16 @@ ui_draw_cmd_can_merge :: (a: UI_Draw_Cmd, b: UI_Draw_Cmd) -> bool {
             return true;
 
         case .TEXT;
+<<<<<<< Updated upstream
             return a.font_size == b.font_size &&
                    a.font_override == b.font_override &&
                    ui_color_equal(a.color, b.color);
 
         case .IMAGE;
             return a.texture_id == b.texture_id && ui_color_equal(a.tint, b.tint);
+=======
+            return a.font == b.font && a.font_size == b.font_size && ui_color_equal(a.color, b.color);
+>>>>>>> Stashed changes
 
         case;
             return false;
@@ -1085,6 +1103,7 @@ ui_cmd_text_font :: (font: *MSDF_Font, text: string, left_edge_x: float32, basel
     cmd.vertex_count = buffers.text_positions.count - vertex_offset;
     cmd.index_offset = index_offset;
     cmd.index_count = index_count;
+    cmd.font = font;
     cmd.font_size = font_size;
     cmd.color = color;
     cmd.font_override = font;
@@ -1092,7 +1111,12 @@ ui_cmd_text_font :: (font: *MSDF_Font, text: string, left_edge_x: float32, basel
 }
 
 ui_cmd_texture :: (texture_id: GLuint, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1}) {
+<<<<<<< Updated upstream
     ui_cmd_image(texture_id, rect, tint);
+=======
+    // Compatibility hook for callers from the newer UI branch. This checked-out
+    // UI renderer does not currently include textured quad batching.
+>>>>>>> Stashed changes
 }
 
 ui_cmd_scissor_push :: (rect: UI_Rect) {
@@ -1202,6 +1226,10 @@ ui_flush_render_batch :: (batch: *UI_Render_Batch) {
             glUseProgram(ctx.msdf_renderer.shader_program_gl_handle);
 
             glActiveTexture(GL_TEXTURE0);
+<<<<<<< Updated upstream
+=======
+            font := ifx batch.text_font != null then batch.text_font else ctx.font;
+>>>>>>> Stashed changes
             glBindTexture(GL_TEXTURE_2D, font.texture_id);
 
             set_texture_sampler_uniform(ctx.msdf_renderer, 0);
@@ -1255,7 +1283,11 @@ ui_render_batch_append_geometry_range :: (batch: *UI_Render_Batch, buffers: *UI_
 }
 
 ui_render_batch_append_text :: (batch: *UI_Render_Batch, cmd: UI_Draw_Cmd) {
+<<<<<<< Updated upstream
     font := ifx cmd.font_override != null then cmd.font_override else ui_ctx.font;
+=======
+    font := ifx cmd.font != null then cmd.font else ui_ctx.font;
+>>>>>>> Stashed changes
     msdf_append_text_geometry(
         font,
         cmd.text,
@@ -1268,6 +1300,7 @@ ui_render_batch_append_text :: (batch: *UI_Render_Batch, cmd: UI_Draw_Cmd) {
         *batch.texture_coordinates,
         *batch.indices
     );
+    batch.text_font = font;
 }
 
 ui_render_batch_append_text_range :: (batch: *UI_Render_Batch, buffers: *UI_Frame_Draw_Buffers, cmd: UI_Draw_Cmd) {
@@ -1460,6 +1493,7 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
 
     active_type := UI_Render_Batch_Type.NONE;
     active_text_font_size: float32 = 0;
+    active_text_font: *MSDF_Font = null;
     active_text_color: Vector4;
     active_text_font: *MSDF_Font = null;
     active_image_texture_id: GLuint = 0;
@@ -1508,8 +1542,12 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
 
                 font := ifx cmd.font_override != null then cmd.font_override else ctx.font;
                 same_text_state := active_type == .TEXT &&
+<<<<<<< Updated upstream
                                    font == ctx.font &&
                                    cmd.font_override == null &&
+=======
+                                   active_text_font == cmd.font &&
+>>>>>>> Stashed changes
                                    active_text_font_size == cmd.font_size &&
                                    active_text_font == font &&
                                    ui_color_equal(active_text_color, cmd.color);
@@ -1520,6 +1558,10 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
 
                     glActiveTexture(GL_TEXTURE0);
+<<<<<<< Updated upstream
+=======
+                    font := ifx cmd.font != null then cmd.font else ctx.font;
+>>>>>>> Stashed changes
                     glBindTexture(GL_TEXTURE_2D, font.texture_id);
 
                     set_texture_sampler_uniform(ctx.msdf_renderer, 0);
@@ -1530,6 +1572,7 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
                     set_screen_pixels_per_distance_range_uniform(ctx.msdf_renderer, px_range);
 
                     active_type = .TEXT;
+                    active_text_font = cmd.font;
                     active_text_font_size = cmd.font_size;
                     active_text_color = cmd.color;
                     active_text_font = font;

@@ -928,6 +928,7 @@ ui_window_id :: (title: string) -> UI_Id {
     return ui_hash_fnv1a(title);
 }
 
+<<<<<<< Updated upstream
 ui_window_snap_rect_for_mouse :: (mouse_x: float32, mouse_y: float32) -> UI_Rect, bool {
     ctx := ui_ctx;
 
@@ -954,6 +955,8 @@ ui_window_snap_rect_for_mouse :: (mouse_x: float32, mouse_y: float32) -> UI_Rect
     return .{}, false;
 }
 
+=======
+>>>>>>> Stashed changes
 ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 = 50, default_w: float32 = 300, default_h: float32 = 400) -> bool {
     ctx := ui_ctx;
     style := *ctx.style;
@@ -967,6 +970,7 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
         new_state.scroll_y = 0;
         new_state.content_h = 0;
         new_state.open = true;
+        new_state.is_window = true;
         new_state.z_order = ctx.next_z_order;
         ctx.next_z_order += 1;
         table_add(*ctx.window_states, id, new_state);
@@ -1272,7 +1276,7 @@ ui_end_panel :: () {
 
 // scroll region (standalone, not tied to a window)
 
-ui_begin_scroll_region :: (label: string, height: float32) -> float32 {
+ui_begin_scroll_region_ex :: (label: string, height: float32, horizontal_padding: float32 = -1) -> (scroll_y: float32, inner_rect: UI_Rect) {
     ctx := ui_ctx;
     style := *ctx.style;
     id := ui_get_id(label);
@@ -1285,6 +1289,7 @@ ui_begin_scroll_region :: (label: string, height: float32) -> float32 {
         new_state.scroll_y = 0;
         new_state.content_h = 0;
         new_state.open = true;
+        new_state.is_window = false;
         table_add(*ctx.window_states, id, new_state);
         state_ptr = table_find_pointer(*ctx.window_states, id);
     }
@@ -1300,14 +1305,23 @@ ui_begin_scroll_region :: (label: string, height: float32) -> float32 {
 
     ui_cmd_scissor_push(rect);
 
+    pad := ifx horizontal_padding >= 0 then horizontal_padding else style.padding;
+    inner_rect: UI_Rect = .{
+        rect.x + pad,
+        rect.y,
+        rect.w - pad * 2 - style.scrollbar_width,
+        rect.h
+    };
+    if inner_rect.w < 0 inner_rect.w = 0;
+
     ui_push_id(label);
     ui_push_layout(.{
         mode       = .VERTICAL,
-        cursor_x   = rect.x + style.padding,
+        cursor_x   = inner_rect.x,
         cursor_y   = rect.y - state_ptr.scroll_y,
-        origin_x   = rect.x + style.padding,
+        origin_x   = inner_rect.x,
         origin_y   = rect.y - state_ptr.scroll_y,
-        max_w      = rect.w - style.padding * 2 - style.scrollbar_width,
+        max_w      = inner_rect.w,
         max_h      = rect.h + state_ptr.content_h,
         visible_h  = rect.h,
         row_height = 0,
@@ -1315,7 +1329,13 @@ ui_begin_scroll_region :: (label: string, height: float32) -> float32 {
         content_max_y = 0,
     });
 
-    return state_ptr.scroll_y;
+    scroll_y: float32 = state_ptr.scroll_y;
+    return scroll_y, inner_rect;
+}
+
+ui_begin_scroll_region :: (label: string, height: float32) -> float32 {
+    scroll_y, _ := ui_begin_scroll_region_ex(label, height);
+    return scroll_y;
 }
 
 ui_end_scroll_region :: () {
@@ -1630,14 +1650,30 @@ ui_is_window_open :: (title: string) -> bool {
     return true;
 }
 
+<<<<<<< Updated upstream
 ui_window_title_id :: (title: string) -> UI_Id {
     return ui_hash_fnv1a("#title", ui_window_id(title));
+=======
+ui_mouse_over_open_window :: () -> bool {
+    ctx := ui_ctx;
+    for * state, id: ctx.window_states {
+        if !state.is_window continue;
+        if !state.open continue;
+        rect := state.rect;
+        if state.collapsed {
+            rect.h = ctx.style.window_title_height;
+        }
+        if rect_contains(rect, ctx.mouse.x, ctx.mouse.y) return true;
+    }
+    return false;
+>>>>>>> Stashed changes
 }
 
 ui_window_rect :: (title: string) -> UI_Rect, bool {
     id := ui_window_id(title);
     state_ptr := table_find_pointer(*ui_ctx.window_states, id);
     if state_ptr == null return .{}, false;
+<<<<<<< Updated upstream
     return state_ptr.rect, state_ptr.open;
 }
 
@@ -1656,6 +1692,24 @@ ui_window_title_released_over :: (dragged_title: string, target_title: string) -
     target_rect, ok := ui_window_title_rect(target_title);
     if !ok return false;
     return rect_contains(target_rect, ui_ctx.mouse.x, ui_ctx.mouse.y);
+=======
+    return state_ptr.rect, true;
+}
+
+ui_window_force_front :: (title: string) {
+    id := ui_window_id(title);
+    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
+    if state_ptr == null return;
+    state_ptr.z_order = ui_ctx.next_z_order;
+    ui_ctx.next_z_order += 1;
+}
+
+ui_window_set_rect :: (title: string, rect: UI_Rect) {
+    id := ui_window_id(title);
+    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
+    if state_ptr == null return;
+    state_ptr.rect = rect;
+>>>>>>> Stashed changes
 }
 
 ui_window_z_order :: (title: string) -> s32 {
@@ -1665,6 +1719,7 @@ ui_window_z_order :: (title: string) -> s32 {
     return state_ptr.z_order;
 }
 
+<<<<<<< Updated upstream
 ui_window_force_front :: (title: string) {
     id := ui_window_id(title);
     state_ptr := table_find_pointer(*ui_ctx.window_states, id);
@@ -1682,6 +1737,22 @@ ui_window_set_rect :: (title: string, rect: UI_Rect) {
     }
 }
 
+=======
+ui_window_title_is_active :: (title: string) -> bool {
+    id := ui_window_id(title);
+    title_id := ui_hash_fnv1a("#title", id);
+    return ui_is_active(title_id);
+}
+
+ui_window_title_released_over :: (dragged_title: string, target_title: string) -> bool {
+    if !ui_window_title_is_active(dragged_title) return false;
+    if !ui_ctx.mouse.left_released return false;
+    target_rect, ok := ui_window_rect(target_title);
+    if !ok return false;
+    title_rect: UI_Rect = .{target_rect.x, target_rect.y, target_rect.w, ui_ctx.style.window_title_height};
+    return rect_contains(title_rect, ui_ctx.mouse.x, ui_ctx.mouse.y);
+}
+>>>>>>> Stashed changes
 
 ui_drag_float :: (label: string, value: *float32, speed: float32 = 0.1, min_val: float32 = -1000000, max_val: float32 = 1000000) -> bool {
     ctx := ui_ctx;
@@ -1881,11 +1952,15 @@ UI_File_Select_Entry :: struct {
     name: string;
     full_path: string;
     is_directory: bool;
+<<<<<<< Updated upstream
     had_error: bool;
+=======
+>>>>>>> Stashed changes
     size: s64;
     modification_time: Apollo_Time;
 }
 
+<<<<<<< Updated upstream
 UI_File_Search_Mode :: enum s32 {
     FILENAME;
     CONTENTS;
@@ -1895,19 +1970,62 @@ UI_File_Create_Mode :: enum {
     NONE;
     FILE;
     DIRECTORY;
+=======
+UI_File_Select_Mode :: enum {
+    FILE;
+    DIRECTORY;
+}
+
+UI_File_Select_Create_Kind :: enum {
+    NONE;
+    FILE;
+    DIRECTORY;
+}
+
+UI_File_Select_Sort_Column :: enum {
+    NAME;
+    SIZE;
+    MODIFIED;
+}
+
+UI_FILE_SELECT_PLACES_PATH :: "data/file_select_places.txt";
+UI_FILE_SELECT_CONTEXT_MENU_ID :: #run ui_hash_fnv1a("file_select_places_context_menu");
+
+UI_File_Select_Context_Kind :: enum {
+    NONE;
+    ENTRY_DIRECTORY;
+    PLACE;
+>>>>>>> Stashed changes
 }
 
 UI_File_Select_State :: struct {
     current_directory: string;
     entries: [..] UI_File_Select_Entry;
+    places: [..] string;
+    mode: UI_File_Select_Mode = .FILE;
+    show_dotfiles: bool;
+    sort_column: UI_File_Select_Sort_Column = .NAME;
+    sort_ascending: bool = true;
+    name_column_fraction: float32;
+    size_column_fraction: float32;
 
     selected_index: s32 = -1;
     selected_path: string;
 
     path_buffer: [256] u8;
     path_length: s32;
+    create_name_buffer: [256] u8;
+    create_name_length: s32;
+    create_kind: UI_File_Select_Create_Kind;
+    create_error: string;
+    context_kind: UI_File_Select_Context_Kind;
+    context_path: string;
+    context_index: s32 = -1;
+    context_x: float32;
+    context_y: float32;
 
     initialized: bool;
+    places_loaded: bool;
     needs_refresh: bool;
     show_dotfiles: bool;
     name_column_width: float32;
@@ -1939,6 +2057,7 @@ ui_file_select_free_entries :: (state: *UI_File_Select_State) {
     array_reset(*state.entries);
 }
 
+<<<<<<< Updated upstream
 ui_file_select_free_search :: (state: *UI_File_Select_State) {
     for state.search_files    free(it);
     for state.search_results  free(it);
@@ -1955,6 +2074,13 @@ ui_file_select_free_search :: (state: *UI_File_Select_State) {
 ui_file_select_set_search_status :: (state: *UI_File_Select_State, message: string) {
     if state.search_status.count  free(state.search_status);
     state.search_status = copy_string(message);
+=======
+ui_file_select_free_places :: (state: *UI_File_Select_State) {
+    for state.places {
+        free(it);
+    }
+    array_reset(*state.places);
+>>>>>>> Stashed changes
 }
 
 ui_file_select_set_selected_path :: (state: *UI_File_Select_State, path: string) {
@@ -1962,6 +2088,7 @@ ui_file_select_set_selected_path :: (state: *UI_File_Select_State, path: string)
     state.selected_path = copy_string(path);
 }
 
+<<<<<<< Updated upstream
 ui_file_select_set_error :: (state: *UI_File_Select_State, message: string) {
     if state.error_message.count  free(state.error_message);
     state.error_message = copy_string(message);
@@ -1970,6 +2097,11 @@ ui_file_select_set_error :: (state: *UI_File_Select_State, message: string) {
 
 ui_file_select_clear_error :: (state: *UI_File_Select_State) {
     ui_file_select_set_error(state, "");
+=======
+ui_file_select_clear_create_error :: (state: *UI_File_Select_State) {
+    if state.create_error.count  free(state.create_error);
+    state.create_error = "";
+>>>>>>> Stashed changes
 }
 
 ui_file_select_sync_path_buffer :: (state: *UI_File_Select_State) {
@@ -1992,6 +2124,117 @@ ui_file_select_copy_browser_directory :: (directory: string) -> string {
     return result;
 }
 
+ui_file_select_normalized_copy :: (path: string) -> string {
+    result := ui_file_select_copy_browser_directory(path);
+    normalize_slashes(result);
+    ui_file_select_collapse_drive_root_slashes(*result);
+    return result;
+}
+
+ui_file_select_path_equal :: (a: string, b: string) -> bool {
+    if a.count != b.count return false;
+    for i: 0..a.count-1 {
+        ca := a[i];
+        cb := b[i];
+        if ca == #char "\\" ca = #char "/";
+        if cb == #char "\\" cb = #char "/";
+        if ca != cb return false;
+    }
+    return true;
+}
+
+ui_file_select_place_index :: (state: *UI_File_Select_State, path: string) -> s32 {
+    normalized := ui_file_select_normalized_copy(path);
+    defer free(normalized);
+
+    for i: 0..state.places.count-1 {
+        if ui_file_select_path_equal(state.places[i], normalized) return cast(s32) i;
+    }
+    return -1;
+}
+
+ui_file_select_add_place :: (state: *UI_File_Select_State, path: string) -> bool {
+    if path.count == 0 return false;
+    if ui_file_select_place_index(state, path) >= 0 return false;
+
+    normalized := ui_file_select_normalized_copy(path);
+    array_add(*state.places, normalized);
+    return true;
+}
+
+ui_file_select_save_places :: (state: *UI_File_Select_State) -> bool {
+    out: [..] u8;
+    defer array_free(out);
+
+    for place: state.places {
+        for i: 0..place.count-1 array_add(*out, place[i]);
+        array_add(*out, #char "\n");
+    }
+
+    make_directory_if_it_does_not_exist("data", recursive = true);
+    return write_entire_file(UI_FILE_SELECT_PLACES_PATH, out.data, out.count);
+}
+
+ui_file_select_remove_place :: (state: *UI_File_Select_State, index: s32) -> bool {
+    if index < 0 || index >= state.places.count return false;
+    free(state.places[index]);
+    for i: index..state.places.count-2 {
+        state.places[i] = state.places[i + 1];
+    }
+    state.places.count -= 1;
+    return true;
+}
+
+ui_file_select_add_default_place :: (state: *UI_File_Select_State, path: string) {
+    if path.count == 0 return;
+    ui_file_select_add_place(state, path);
+}
+
+ui_file_select_load_default_places :: (state: *UI_File_Select_State) {
+    home, ok := get_home_directory();
+    if ok {
+        ui_file_select_add_default_place(state, home);
+        ui_file_select_add_default_place(state, ui_file_select_join_path(home, "Desktop"));
+        ui_file_select_add_default_place(state, ui_file_select_join_path(home, "Documents"));
+        ui_file_select_add_default_place(state, ui_file_select_join_path(home, "Downloads"));
+        ui_file_select_add_default_place(state, ui_file_select_join_path(home, "Pictures"));
+        ui_file_select_add_default_place(state, ui_file_select_join_path(home, "projects"));
+    }
+}
+
+ui_file_select_load_places :: (state: *UI_File_Select_State) {
+    if state.places_loaded return;
+    state.places_loaded = true;
+
+    data, ok := read_entire_file(UI_FILE_SELECT_PLACES_PATH, log_errors = false);
+    if !ok {
+        ui_file_select_load_default_places(state);
+        ui_file_select_save_places(state);
+        return;
+    }
+    defer free(data);
+
+    line_start := 0;
+    for i: 0..data.count {
+        if i < data.count && data[i] != #char "\n" && data[i] != #char "\r" continue;
+        if i > line_start {
+            line: string;
+            line.data = data.data + line_start;
+            line.count = i - line_start;
+            ui_file_select_add_place(state, line);
+        }
+        line_start = i + 1;
+        if i + 1 < data.count && data[i] == #char "\r" && data[i + 1] == #char "\n" {
+            line_start = i + 2;
+        }
+    }
+
+    if state.places.count == 0 {
+        ui_file_select_load_default_places(state);
+        ui_file_select_save_places(state);
+    }
+}
+
 ui_file_select_collapse_drive_root_slashes :: (path: *string) {
     if path.*.count < 4 return;
     if path.*[1] != #char ":" return;
@@ -2010,6 +2253,7 @@ ui_file_select_set_directory :: (state: *UI_File_Select_State, directory: string
     if state.current_directory.count  free(state.current_directory);
     state.current_directory = new_directory;
     state.selected_index = -1;
+    ui_file_select_set_selected_path(state, "");
     ui_file_select_sync_path_buffer(state);
     state.needs_refresh = true;
 }
@@ -2054,6 +2298,7 @@ ui_file_select_parent_directory :: (directory: string) -> string {
 
 ui_file_select_join_path :: (directory: string, name: string) -> string {
     if directory.count == 0 return copy_string(name);
+<<<<<<< Updated upstream
     if directory[directory.count - 1] == #char "/" || directory[directory.count - 1] == #char "\\" {
         return tprint("%%", directory, name);
     }
@@ -2424,6 +2669,144 @@ ui_file_select_create_dialog :: (state: *UI_File_Select_State) {
     } else if !ui_is_window_open(title) {
         state.create_mode = .NONE;
     }
+=======
+    if directory[directory.count - 1] == #char "/" return tprint("%%", directory, name);
+    return tprint("%/%", directory, name);
+}
+
+ui_file_select_is_default_ignored :: (name: string) -> bool {
+    return name == ".git" || name == ".svn" || name == ".hg";
+}
+
+ui_file_select_is_dotfile :: (name: string) -> bool {
+    return name.count > 0 && name[0] == #char ".";
+}
+
+ui_file_select_name_has_path_separator :: (name: string) -> bool {
+    for name {
+        if it == #char "/" || it == #char "\\" return true;
+    }
+    return false;
+}
+
+ui_file_select_format_size :: (entry: UI_File_Select_Entry) -> string {
+    if entry.is_directory return "<dir>";
+    if entry.size < 0 return "";
+    if entry.size < 1024 return tprint("% B", entry.size);
+    if entry.size < 1024 * 1024 return tprint("% KB", entry.size / 1024);
+    if entry.size < 1024 * 1024 * 1024 return tprint("% MB", entry.size / (1024 * 1024));
+    return tprint("% GB", entry.size / (1024 * 1024 * 1024));
+}
+
+ui_file_select_format_modified :: (entry: UI_File_Select_Entry) -> string {
+    cal := to_calendar(entry.modification_time, .LOCAL);
+    month := cast(s32) cal.month_starting_at_0 + 1;
+    day := cast(s32) cal.day_of_month_starting_at_0 + 1;
+    return tprint("%-%-% %:%",
+        cal.year,
+        formatInt(month, minimum_digits = 2),
+        formatInt(day, minimum_digits = 2),
+        formatInt(cal.hour, minimum_digits = 2),
+        formatInt(cal.minute, minimum_digits = 2));
+}
+
+ui_file_select_string_less :: (a: string, b: string) -> bool {
+    count := min(a.count, b.count);
+    for i: 0..count-1 {
+        ca := a[i];
+        cb := b[i];
+        if ca >= #char "A" && ca <= #char "Z" ca += 32;
+        if cb >= #char "A" && cb <= #char "Z" cb += 32;
+        if ca < cb return true;
+        if ca > cb return false;
+    }
+    return a.count < b.count;
+}
+
+ui_file_select_time_less :: (a: Apollo_Time, b: Apollo_Time) -> bool {
+    aa := cast(S128) a;
+    bb := cast(S128) b;
+    if aa.high != bb.high return aa.high < bb.high;
+    return aa.low < bb.low;
+}
+
+ui_file_select_string_compare :: (a: string, b: string) -> s32 {
+    if ui_file_select_string_less(a, b) return -1;
+    if ui_file_select_string_less(b, a) return 1;
+    return 0;
+}
+
+ui_file_select_entry_compare :: (state: *UI_File_Select_State, a: UI_File_Select_Entry, b: UI_File_Select_Entry) -> s32 {
+    if a.is_directory != b.is_directory {
+        return ifx a.is_directory then cast(s32) -1 else cast(s32) 1;
+    }
+
+    result: s32;
+    if state.sort_column == .NAME {
+        result = ui_file_select_string_compare(a.name, b.name);
+    } else if state.sort_column == .SIZE {
+        if a.size == b.size {
+            result = ui_file_select_string_compare(a.name, b.name);
+        } else if a.size < b.size {
+            result = -1;
+        } else {
+            result = 1;
+        }
+    } else {
+        if a.modification_time == b.modification_time {
+            result = ui_file_select_string_compare(a.name, b.name);
+        } else if ui_file_select_time_less(a.modification_time, b.modification_time) {
+            result = -1;
+        } else {
+            result = 1;
+        }
+    }
+
+    return ifx state.sort_ascending then result else -result;
+}
+
+ui_file_select_entry_less :: (state: *UI_File_Select_State, a: UI_File_Select_Entry, b: UI_File_Select_Entry) -> bool {
+    return ui_file_select_entry_compare(state, a, b) < 0;
+}
+
+ui_file_select_sort_entries :: (state: *UI_File_Select_State) {
+    entries := *state.entries;
+    for i: 1..entries.count-1 {
+        entry := entries.*[i];
+        j := i;
+        while j > 0 && ui_file_select_entry_less(state, entry, entries.*[j - 1]) {
+            entries.*[j] = entries.*[j - 1];
+            j -= 1;
+        }
+        entries.*[j] = entry;
+    }
+}
+
+ui_file_select_sync_selected_index :: (state: *UI_File_Select_State) {
+    if state.selected_path.count == 0 {
+        state.selected_index = -1;
+        return;
+    }
+
+    state.selected_index = -1;
+    for i: 0..state.entries.count-1 {
+        if state.entries[i].full_path == state.selected_path {
+            state.selected_index = cast(s32) i;
+            return;
+        }
+    }
+}
+
+ui_file_select_set_sort :: (state: *UI_File_Select_State, column: UI_File_Select_Sort_Column) {
+    if state.sort_column == column {
+        state.sort_ascending = !state.sort_ascending;
+    } else {
+        state.sort_column = column;
+        state.sort_ascending = true;
+    }
+    ui_file_select_sort_entries(state);
+    ui_file_select_sync_selected_index(state);
+>>>>>>> Stashed changes
 }
 
 ui_file_select_refresh :: (state: *UI_File_Select_State) {
@@ -2432,8 +2815,21 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
     state.selected_index = -1;
     state.needs_refresh = false;
 
+<<<<<<< Updated upstream
     visitor :: (info: *File_Visit_Info, state: *UI_File_Select_State) {
         if !state.show_dotfiles && info.short_name.count > 0 && info.short_name[0] == #char "." return;
+=======
+    Visitor_Context :: struct {
+        entries: *[..] UI_File_Select_Entry;
+        mode: UI_File_Select_Mode;
+        show_dotfiles: bool;
+    }
+
+    visitor :: (info: *File_Visit_Info, ctx: *Visitor_Context) {
+        if ui_file_select_is_default_ignored(info.short_name) return;
+        if !ctx.show_dotfiles && ui_file_select_is_dotfile(info.short_name) return;
+        if ctx.mode == .DIRECTORY && !info.is_directory return;
+>>>>>>> Stashed changes
 
         entry: UI_File_Select_Entry;
         entry.name = copy_string(info.short_name);
@@ -2441,6 +2837,7 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
         normalize_slashes(entry.full_path);
         ui_file_select_collapse_drive_root_slashes(*entry.full_path);
         entry.is_directory = info.is_directory;
+<<<<<<< Updated upstream
         entry.had_error = info.had_error;
         entry.size = info.size;
         entry.modification_time = info.modification_time;
@@ -2463,12 +2860,374 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
     }
 
     ok := visit_files(state.current_directory, false, state, visitor, visit_files = true, visit_directories = true, follow_directory_symlinks = false);
+=======
+        entry.size = info.size;
+        entry.modification_time = info.modification_time;
+
+        array_add(ctx.entries, entry);
+    }
+
+    ctx: Visitor_Context = .{*state.entries, state.mode, state.show_dotfiles};
+    ok := visit_files(state.current_directory, false, *ctx, visitor, visit_files = state.mode == .FILE, visit_directories = true, follow_directory_symlinks = false);
+>>>>>>> Stashed changes
     if !ok {
         ui_file_select_set_error(state, tprint("Could not open directory: %", state.current_directory));
     }
+    ui_file_select_sort_entries(state);
+    ui_file_select_sync_selected_index(state);
 }
 
-ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory: string = "") -> bool {
+ui_file_select_set_mode :: (state: *UI_File_Select_State, mode: UI_File_Select_Mode) {
+    if state.mode == mode return;
+    state.mode = mode;
+    state.selected_index = -1;
+    ui_file_select_set_selected_path(state, "");
+    state.needs_refresh = true;
+}
+
+ui_file_select_begin_create :: (state: *UI_File_Select_State, kind: UI_File_Select_Create_Kind) {
+    state.create_kind = kind;
+    state.create_name_length = 0;
+    for i: 0..state.create_name_buffer.count - 1 state.create_name_buffer[i] = 0;
+    ui_file_select_clear_create_error(state);
+}
+
+ui_file_select_name_from_create_buffer :: (state: *UI_File_Select_State) -> string {
+    result: string;
+    result.data = state.create_name_buffer.data;
+    result.count = state.create_name_length;
+    return result;
+}
+
+ui_file_select_finish_create :: (state: *UI_File_Select_State) -> bool {
+    name := ui_file_select_name_from_create_buffer(state);
+    if name.count == 0 {
+        ui_file_select_clear_create_error(state);
+        state.create_error = copy_string("Name is required");
+        return false;
+    }
+
+    if ui_file_select_name_has_path_separator(name) {
+        ui_file_select_clear_create_error(state);
+        state.create_error = copy_string("Name cannot contain path separators");
+        return false;
+    }
+
+    path := ui_file_select_join_path(state.current_directory, name);
+    ok := false;
+    if state.create_kind == .DIRECTORY {
+        ok = make_directory_if_it_does_not_exist(path);
+    } else if state.create_kind == .FILE {
+        ok = write_entire_file(path, "");
+    }
+
+    if !ok {
+        ui_file_select_clear_create_error(state);
+        state.create_error = copy_string("Could not create entry");
+        return false;
+    }
+
+    created_kind := state.create_kind;
+    state.create_kind = .NONE;
+    if created_kind == .DIRECTORY {
+        ui_file_select_set_directory(state, path);
+    } else {
+        ui_file_select_set_selected_path(state, path);
+        state.selected_index = -1;
+        state.needs_refresh = true;
+    }
+    ui_file_select_clear_create_error(state);
+    return true;
+}
+
+ui_file_select_cell_text :: (text: string, rect: UI_Rect, font_size: float32, color: Vector4, right_reserved: float32 = 0) {
+    style := *ui_ctx.style;
+    clip_rect := rect;
+    if clip_rect.w <= style.padding return;
+    ui_cmd_scissor_push(clip_rect);
+    text_x := rect.x + style.padding;
+    text_y := ui_text_baseline_y(rect, font_size);
+    ui_cmd_text(text, text_x, text_y, font_size, color);
+    ui_cmd_scissor_pop();
+}
+
+ui_file_select_set_context_path :: (state: *UI_File_Select_State, path: string) {
+    if state.context_path.count  free(state.context_path);
+    state.context_path = copy_string(path);
+}
+
+ui_file_select_open_context_menu :: (state: *UI_File_Select_State, kind: UI_File_Select_Context_Kind, path: string, index: s32) {
+    state.context_kind = kind;
+    state.context_index = index;
+    state.context_x = ui_ctx.mouse.x;
+    state.context_y = ui_ctx.mouse.y;
+    ui_file_select_set_context_path(state, path);
+    ui_ctx.open_popup_id = UI_FILE_SELECT_CONTEXT_MENU_ID;
+    ui_ctx.popup_rect = .{state.context_x, state.context_y, 180, ui_ctx.style.button_height + ui_ctx.style.padding};
+}
+
+ui_file_select_render_row :: (state: *UI_File_Select_State, entry: UI_File_Select_Entry, index: s32, rect: UI_Rect, name_w: float32, size_w: float32) -> (clicked: bool, right_clicked: bool) {
+    ctx := ui_ctx;
+    style := *ctx.style;
+    id := ui_get_id(entry.full_path);
+
+    ui_try_hot(id, rect);
+    ui_try_active(id);
+    clicked := ui_was_clicked(id);
+    if clicked  ui_emit_audio(.BUTTON_CLICK, id);
+    right_clicked := ui_is_hot(id) && ctx.mouse.right_pressed;
+
+    selected := state.selected_index == index;
+    bg: Vector4;
+    if selected {
+        bg = style.color_accent;
+    } else if ui_is_hot(id) {
+        bg = style.color_bg_hover;
+    } else if index % 2 == 0 {
+        bg = .{0.095, 0.10, 0.11, 1};
+    } else {
+        bg = .{0.075, 0.08, 0.09, 1};
+    }
+    ui_cmd_rect(rect, bg);
+
+    name_rect: UI_Rect = .{rect.x, rect.y, name_w, rect.h};
+    size_rect: UI_Rect = .{rect.x + name_w, rect.y, size_w, rect.h};
+    modified_rect: UI_Rect = .{rect.x + name_w + size_w, rect.y, rect.w - name_w - size_w, rect.h};
+
+    ui_cmd_rect(.{size_rect.x, rect.y, 1, rect.h}, style.color_border);
+    ui_cmd_rect(.{modified_rect.x, rect.y, 1, rect.h}, style.color_border);
+
+    display_name := ifx entry.is_directory then tprint("%/", entry.name) else entry.name;
+    text_color := ifx entry.is_directory then .{0.62, 0.78, 1.0, 1} else style.color_text;
+    if selected text_color = .{1, 1, 1, 1};
+
+    ui_file_select_cell_text(display_name, name_rect, style.font_size, text_color);
+    ui_file_select_cell_text(ui_file_select_format_size(entry), size_rect, style.font_size, style.color_text_disabled);
+    ui_file_select_cell_text(ui_file_select_format_modified(entry), modified_rect, style.font_size, style.color_text_disabled);
+
+    return clicked, right_clicked;
+}
+
+ui_file_select_sort_indicator :: (state: *UI_File_Select_State, column: UI_File_Select_Sort_Column) -> string {
+    if state.sort_column != column return "";
+    return ifx state.sort_ascending then "^" else "v";
+}
+
+ui_file_select_render_header_cell :: (state: *UI_File_Select_State, label: string, column: UI_File_Select_Sort_Column, rect: UI_Rect) {
+    ctx := ui_ctx;
+    style := *ctx.style;
+    id := ui_get_id(label);
+
+    ui_try_hot(id, rect);
+    ui_try_active(id);
+    if ui_was_clicked(id) {
+        ui_file_select_set_sort(state, column);
+        ui_emit_audio(.BUTTON_CLICK, id);
+    }
+
+    bg := ifx ui_is_active(id) then style.color_bg_active else ifx ui_is_hot(id) then style.color_bg_hover else style.color_bg;
+    ui_cmd_rect(rect, bg);
+
+    indicator := ui_file_select_sort_indicator(state, column);
+    indicator_reserved: float32 = 0;
+    if indicator.count > 0 {
+        indicator_reserved = msdf_measure_text_pixels(ctx.font, indicator, style.font_size) + style.padding * 2;
+    }
+
+    label_rect := rect;
+    label_rect.w -= indicator_reserved;
+    ui_file_select_cell_text(label, label_rect, style.font_size, style.color_text_disabled);
+
+    if indicator.count > 0 {
+        text_y := ui_text_baseline_y(rect, style.font_size);
+        indicator_w := msdf_measure_text_pixels(ctx.font, indicator, style.font_size);
+        indicator_rect: UI_Rect = .{rect.x + rect.w - indicator_reserved, rect.y, indicator_reserved, rect.h};
+        ui_cmd_scissor_push(indicator_rect);
+        ui_cmd_text(indicator, rect.x + rect.w - indicator_w - style.padding, text_y, style.font_size, style.color_text);
+        ui_cmd_scissor_pop();
+    }
+}
+
+ui_file_select_drag_divider :: (label: string, rect: UI_Rect, left_fraction: *float32, right_fraction: *float32, table_w: float32) {
+    ctx := ui_ctx;
+    style := *ctx.style;
+    id := ui_get_id(label);
+
+    hit_rect := rect_expand(rect, 4);
+    ui_try_hot(id, hit_rect);
+    ui_try_active(id);
+    if ui_is_active(id) && ctx.mouse.left_down && table_w > 1 {
+        delta := ctx.mouse.dx / table_w;
+        left_fraction.* += delta;
+        right_fraction.* -= delta;
+    }
+
+    color := ifx ui_is_active(id) then style.color_accent else ifx ui_is_hot(id) then style.color_accent_hover else style.color_border;
+    ui_cmd_rect(rect, color);
+}
+
+ui_file_select_column_widths :: (state: *UI_File_Select_State, table_w: float32) -> (name_w: float32, size_w: float32, modified_w: float32) {
+    if state.name_column_fraction <= 0 state.name_column_fraction = 0.46;
+    if state.size_column_fraction <= 0 state.size_column_fraction = 0.16;
+
+    min_name := ifx table_w >= 260 then 100.0 else 40.0;
+    min_size := ifx table_w >= 260 then 72.0 else 36.0;
+    min_modified := ifx table_w >= 260 then 110.0 else 50.0;
+
+    name_w: float32 = state.name_column_fraction * table_w;
+    size_w: float32 = state.size_column_fraction * table_w;
+    modified_w: float32 = table_w - name_w - size_w;
+
+    if name_w < min_name {
+        diff := min_name - name_w;
+        name_w = min_name;
+        modified_w -= diff;
+    }
+    if size_w < min_size {
+        diff := min_size - size_w;
+        size_w = min_size;
+        modified_w -= diff;
+    }
+    if modified_w < min_modified {
+        diff := min_modified - modified_w;
+        modified_w = min_modified;
+        if name_w - min_name > size_w - min_size {
+            name_w -= min(diff, name_w - min_name);
+        } else {
+            size_w -= min(diff, size_w - min_size);
+        }
+    }
+
+    if name_w + size_w + modified_w > table_w {
+        scale := table_w / (name_w + size_w + modified_w);
+        name_w *= scale;
+        size_w *= scale;
+        modified_w = table_w - name_w - size_w;
+    }
+
+    if table_w > 1 {
+        state.name_column_fraction = name_w / table_w;
+        state.size_column_fraction = size_w / table_w;
+    }
+
+    return name_w, size_w, modified_w;
+}
+
+ui_file_select_place_label :: (path: string) -> string {
+    home, ok := get_home_directory();
+    if ok && ui_file_select_path_equal(path, home) return "Home";
+
+    normalized := copy_temporary_string(path);
+    normalize_slashes(normalized);
+    while normalized.count > 1 && normalized[normalized.count - 1] == #char "/" {
+        normalized.count -= 1;
+    }
+
+    name := path_filename(normalized);
+    if name.count > 0 return name;
+    return normalized;
+}
+
+ui_file_select_render_places :: (state: *UI_File_Select_State, rect: UI_Rect) {
+    ctx := ui_ctx;
+    style := *ctx.style;
+
+    ui_cmd_rect(rect, .{0.105, 0.11, 0.12, 1});
+    ui_cmd_rect_outline(rect, style.color_border);
+
+    ui_push_layout(.{
+        mode       = .VERTICAL,
+        cursor_x   = rect.x + style.padding,
+        cursor_y   = rect.y + style.padding,
+        origin_x   = rect.x + style.padding,
+        origin_y   = rect.y + style.padding,
+        max_w      = rect.w - style.padding * 2,
+        max_h      = rect.h - style.padding * 2,
+        visible_h  = rect.h - style.padding * 2,
+        row_height = 0,
+        indent     = 0,
+        content_max_y = rect.y + style.padding,
+    });
+    ui_push_id("places");
+
+    ui_label_disabled("Places");
+    row_h := style.font_size + style.padding;
+    for i: 0..state.places.count-1 {
+        place := state.places[i];
+        row := ui_allocate_rect(0, row_h);
+        id := ui_get_id(place);
+
+        ui_try_hot(id, row);
+        ui_try_active(id);
+
+        selected := ui_file_select_path_equal(place, state.current_directory);
+        bg: Vector4;
+        if selected       bg = .{0.16, 0.25, 0.36, 1};
+        else if ui_is_hot(id) bg = style.color_bg_hover;
+        else              bg = .{0.105, 0.11, 0.12, 1};
+        ui_cmd_rect(row, bg);
+
+        label := ui_file_select_place_label(place);
+        ui_file_select_cell_text(label, row, style.font_size, style.color_text);
+
+        if ui_was_clicked(id) {
+            ui_file_select_set_directory(state, place);
+            ui_emit_audio(.BUTTON_CLICK, id);
+        }
+        if ui_is_hot(id) && ctx.mouse.right_pressed {
+            ui_file_select_open_context_menu(state, .PLACE, place, cast(s32) i);
+        }
+    }
+
+    ui_pop_id();
+    ui_pop_layout();
+}
+
+ui_file_select_render_context_menu :: (state: *UI_File_Select_State) {
+    ctx := ui_ctx;
+    style := *ctx.style;
+    id := UI_FILE_SELECT_CONTEXT_MENU_ID;
+    if ctx.open_popup_id != id || state.context_kind == .NONE return;
+
+    label := ifx state.context_kind == .PLACE then "Remove from Places" else "Add to Places";
+    rect: UI_Rect = .{state.context_x, state.context_y, 190, style.button_height};
+    ctx.popup_rect = rect;
+
+    was_drawing_overlay := ctx.drawing_overlay;
+    ctx.drawing_overlay = true;
+    defer ctx.drawing_overlay = was_drawing_overlay;
+
+    ui_cmd_rect(rect, style.color_window_bg);
+    ui_cmd_rect_outline(rect, style.color_border);
+
+    item_id := ui_hash_fnv1a(label, id);
+    is_hovered := rect_contains(rect, ctx.mouse.x, ctx.mouse.y);
+    if is_hovered {
+        ctx.hot = item_id;
+        if ctx.mouse.left_pressed {
+            ctx.active = item_id;
+        }
+    }
+
+    bg := ifx ctx.active == item_id then style.color_bg_active else ifx is_hovered then style.color_bg_hover else style.color_window_bg;
+    ui_cmd_rect(rect, bg);
+    ui_cmd_text(label, rect.x + style.padding, ui_text_baseline_y(rect, style.font_size), style.font_size, style.color_text);
+
+    if is_hovered && ctx.active == item_id && ctx.mouse.left_released {
+        if state.context_kind == .PLACE {
+            ui_file_select_remove_place(state, state.context_index);
+        } else {
+            ui_file_select_add_place(state, state.context_path);
+        }
+        ui_file_select_save_places(state);
+        ctx.open_popup_id = UI_ID_NONE;
+        state.context_kind = .NONE;
+        ui_file_select_set_context_path(state, "");
+        ui_emit_audio(.BUTTON_CLICK, item_id);
+    }
+}
+
+ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory: string = "", mode: UI_File_Select_Mode = .FILE) -> bool {
     if !state.initialized {
         initial_directory := start_directory;
         if initial_directory.count == 0 {
@@ -2476,10 +3235,15 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
         }
 
         state.current_directory = copy_string(initial_directory);
+        state.mode = mode;
         state.initialized = true;
         state.needs_refresh = true;
         ui_file_select_sync_path_buffer(state);
+    } else {
+        ui_file_select_set_mode(state, mode);
     }
+
+    ui_file_select_load_places(state);
 
     if state.needs_refresh {
         ui_file_select_refresh(state);
@@ -2488,7 +3252,8 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     ui_push_id(label);
     defer ui_pop_id();
 
-    ui_label(label);
+    heading := ifx state.mode == .DIRECTORY then "Directories" else label;
+    ui_label(heading);
     ui_text_input("Path", *state.path_buffer, *state.path_length);
 
     changed := false;
@@ -2528,6 +3293,13 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     }
     ui_end_row();
 
+<<<<<<< Updated upstream
+=======
+    if ui_checkbox("Show dotfiles", *state.show_dotfiles) {
+        state.needs_refresh = true;
+    }
+
+>>>>>>> Stashed changes
     ui_begin_row();
     if ui_button("New File") {
         ui_file_select_begin_create(state, .FILE);
@@ -2537,8 +3309,11 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     }
     ui_end_row();
 
+<<<<<<< Updated upstream
     ui_file_select_draw_search_panel(state);
 
+=======
+>>>>>>> Stashed changes
     if state.had_error {
         ui_label_colored(state.error_message, .{1.0, 0.35, 0.25, 1.0});
     }
@@ -2546,6 +3321,7 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     ui_label(tprint("Current: %", state.current_directory));
 
     style := *ui_ctx.style;
+<<<<<<< Updated upstream
     header_h := style.font_size + style.padding * 1.2;
     header_rect := ui_allocate_rect(0, header_h);
     header_table_rect := ui_file_select_table_inner_rect(header_rect);
@@ -2595,6 +3371,75 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
 
         is_selected := state.selected_index == cast(s32) i;
         if ui_was_clicked(row_id) {
+=======
+    row_h := style.font_size + style.padding;
+    reserved_h := row_h + style.button_height + style.item_spacing * 3;
+    table_total_h := ui_available_height() - reserved_h;
+    if table_total_h < row_h table_total_h = row_h;
+
+    table_outer := ui_allocate_rect(0, table_total_h);
+    show_places := table_outer.w >= 360;
+    places_w: float32 = 0;
+    browser_gap: float32 = 0;
+    if show_places {
+        places_w = clamp(table_outer.w * 0.26, 120.0, 180.0);
+        browser_gap = style.item_spacing;
+    }
+
+    places_rect: UI_Rect = .{table_outer.x, table_outer.y, places_w, table_outer.h};
+    browser_rect: UI_Rect = .{table_outer.x + places_w + browser_gap, table_outer.y, table_outer.w - places_w - browser_gap, table_outer.h};
+    if browser_rect.w < 0 browser_rect.w = 0;
+
+    if show_places {
+        ui_file_select_render_places(state, places_rect);
+    }
+
+    table_scroller_h := browser_rect.h - row_h;
+    if table_scroller_h < 0 table_scroller_h = 0;
+    table_w := browser_rect.w - style.scrollbar_width;
+    if table_w < 0 table_w = 0;
+    name_w, size_w, modified_w := ui_file_select_column_widths(state, table_w);
+
+    header_rect: UI_Rect = .{browser_rect.x, browser_rect.y, table_w, row_h};
+    name_header: UI_Rect = .{header_rect.x, header_rect.y, name_w, header_rect.h};
+    size_header: UI_Rect = .{header_rect.x + name_w, header_rect.y, size_w, header_rect.h};
+    modified_header: UI_Rect = .{header_rect.x + name_w + size_w, header_rect.y, modified_w, header_rect.h};
+
+    ui_file_select_render_header_cell(state, "Name", .NAME, name_header);
+    ui_file_select_render_header_cell(state, "Size", .SIZE, size_header);
+    ui_file_select_render_header_cell(state, "Modified", .MODIFIED, modified_header);
+
+    divider_0: UI_Rect = .{header_rect.x + name_w, header_rect.y, 1, header_rect.h};
+    divider_1: UI_Rect = .{header_rect.x + name_w + size_w, header_rect.y, 1, header_rect.h};
+    ui_file_select_drag_divider("name_size_divider", divider_0, *state.name_column_fraction, *state.size_column_fraction, table_w);
+    modified_fraction := 1.0 - state.name_column_fraction - state.size_column_fraction;
+    ui_file_select_drag_divider("size_modified_divider", divider_1, *state.size_column_fraction, *modified_fraction, table_w);
+    state.size_column_fraction = 1.0 - state.name_column_fraction - modified_fraction;
+    name_w, size_w, modified_w = ui_file_select_column_widths(state, table_w);
+
+    ui_push_layout(.{
+        mode       = .VERTICAL,
+        cursor_x   = browser_rect.x,
+        cursor_y   = browser_rect.y + row_h,
+        origin_x   = browser_rect.x,
+        origin_y   = browser_rect.y + row_h,
+        max_w      = browser_rect.w,
+        max_h      = table_scroller_h,
+        visible_h  = table_scroller_h,
+        row_height = 0,
+        indent     = 0,
+        content_max_y = browser_rect.y + row_h,
+    });
+    ui_begin_scroll_region_ex("file_select_entries", table_scroller_h, 0);
+    for i : 0..state.entries.count-1 {
+        entry := state.entries[i];
+        rect := ui_allocate_rect(0, row_h);
+        clicked, right_clicked := ui_file_select_render_row(state, entry, cast(s32) i, rect, name_w, size_w);
+        if right_clicked && entry.is_directory {
+            ui_file_select_open_context_menu(state, .ENTRY_DIRECTORY, entry.full_path, cast(s32) i);
+        }
+        if clicked {
+>>>>>>> Stashed changes
             if entry.is_directory {
                 ui_file_select_set_directory(state, entry.full_path);
             } else {
@@ -2623,6 +3468,8 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
         ui_file_select_draw_cell(modified_rect, ui_file_select_format_modified(entry), style.color_text_disabled);
     }
     ui_end_scroll_region();
+    ui_pop_layout();
+    ui_file_select_render_context_menu(state);
 
     footer_top = max(visible_bottom - footer_h, layout.origin_y);
     footer_x := layout.origin_x + layout.indent;
@@ -2632,6 +3479,7 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     if state.selected_path.count > 0 {
         ui_file_select_draw_cell(selected_rect, tprint("Selected: %", state.selected_path), style.color_text);
     } else {
+<<<<<<< Updated upstream
         ui_file_select_draw_cell(selected_rect, "Selected: <none>", style.color_text_disabled);
     }
 
@@ -2643,6 +3491,19 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
 
     if ui_file_select_footer_button("Open", open_rect) {
         if state.selected_path.count > 0 {
+=======
+        selected_text := ifx state.mode == .DIRECTORY then tprint("Selected: current directory") else "Selected: <none>";
+        ui_label_disabled(selected_text);
+    }
+
+    ui_begin_row();
+    action_label := ifx state.mode == .DIRECTORY then "Select Directory" else "Open";
+    if ui_button(action_label) {
+        if state.mode == .DIRECTORY {
+            ui_file_select_set_selected_path(state, state.current_directory);
+            changed = true;
+        } else if state.selected_path.count > 0 {
+>>>>>>> Stashed changes
             changed = true;
         }
     }
@@ -2657,12 +3518,47 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     return changed;
 }
 
+ui_file_select_create_dialog :: (state: *UI_File_Select_State) {
+    if state.create_kind == .NONE return;
+
+    title := ifx state.create_kind == .DIRECTORY then "New Directory" else "New File";
+    if ui_begin_window(title, 220, 160, 380, 150) {
+        ui_text_input("Name", *state.create_name_buffer, *state.create_name_length);
+        if state.create_error.count > 0 {
+            ui_label_colored(state.create_error, .{1.0, 0.35, 0.25, 1.0});
+        }
+
+        ui_begin_row();
+        if ui_button("OK") {
+            ui_file_select_finish_create(state);
+        }
+        if ui_button("Cancel") {
+            state.create_kind = .NONE;
+            ui_file_select_clear_create_error(state);
+        }
+        ui_end_row();
+
+        ui_end_window();
+    } else if !ui_is_window_open(title) {
+        state.create_kind = .NONE;
+        ui_file_select_clear_create_error(state);
+    }
+}
+
 ui_file_select_destroy :: (state: *UI_File_Select_State) {
     ui_file_select_free_entries(state);
+<<<<<<< Updated upstream
     ui_file_select_free_search(state);
     if state.current_directory.count  free(state.current_directory);
     if state.selected_path.count      free(state.selected_path);
     if state.error_message.count      free(state.error_message);
+=======
+    ui_file_select_free_places(state);
+    if state.current_directory.count  free(state.current_directory);
+    if state.selected_path.count      free(state.selected_path);
+    if state.context_path.count       free(state.context_path);
+    ui_file_select_clear_create_error(state);
+>>>>>>> Stashed changes
     state.* = .{};
 }
 
