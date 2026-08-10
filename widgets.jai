@@ -928,35 +928,23 @@ ui_window_id :: (title: string) -> UI_Id {
     return ui_hash_fnv1a(title);
 }
 
-<<<<<<< Updated upstream
-ui_window_snap_rect_for_mouse :: (mouse_x: float32, mouse_y: float32) -> UI_Rect, bool {
-    ctx := ui_ctx;
+ui_window_snap_rect_for_mouse :: (mouse_x: float32, mouse_y: float32) -> (rect: UI_Rect, should_snap: bool) {
+    area := ui_ctx.work_area;
+    edge_threshold: float32 = 28.0;
 
-    hotspot: float32 = 48.0;
-    area := ctx.work_area;
-    w := area.w;
-    h := area.h;
-
-    near_left   := mouse_x <= area.x + hotspot;
-    near_right  := mouse_x >= area.x + w - hotspot;
-    near_top    := mouse_y <= area.y + hotspot;
-    near_bottom := mouse_y >= area.y + h - hotspot;
-
-    if near_left && near_top       return .{area.x, area.y, w * 0.5, h * 0.5}, true;
-    if near_right && near_top      return .{area.x + w * 0.5, area.y, w * 0.5, h * 0.5}, true;
-    if near_left && near_bottom    return .{area.x, area.y + h * 0.5, w * 0.5, h * 0.5}, true;
-    if near_right && near_bottom   return .{area.x + w * 0.5, area.y + h * 0.5, w * 0.5, h * 0.5}, true;
-
-    if near_left    return .{area.x, area.y, w * 0.5, h}, true;
-    if near_right   return .{area.x + w * 0.5, area.y, w * 0.5, h}, true;
-    if near_top     return .{area.x, area.y, w, h * 0.5}, true;
-    if near_bottom  return .{area.x, area.y + h * 0.5, w, h * 0.5}, true;
+    if mouse_x <= area.x + edge_threshold {
+        return .{area.x, area.y, area.w * 0.5, area.h}, true;
+    }
+    if mouse_x >= area.x + area.w - edge_threshold {
+        return .{area.x + area.w * 0.5, area.y, area.w * 0.5, area.h}, true;
+    }
+    if mouse_y <= area.y + edge_threshold {
+        return area, true;
+    }
 
     return .{}, false;
 }
 
-=======
->>>>>>> Stashed changes
 ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 = 50, default_w: float32 = 300, default_h: float32 = 400) -> bool {
     ctx := ui_ctx;
     style := *ctx.style;
@@ -1352,12 +1340,46 @@ ui_end_scroll_region :: () {
 
     state_ptr := table_find_pointer(*ctx.window_states, scroll_id);
     if state_ptr != null {
+        style := *ctx.style;
         state_ptr.content_h = content_h;
+        max_scroll := state_ptr.content_h - state_ptr.scroll_region_rect.h;
+        if max_scroll < 0 max_scroll = 0;
+
+        if max_scroll > 0 {
+            track_rect: UI_Rect = .{
+                state_ptr.scroll_region_rect.x + state_ptr.scroll_region_rect.w - style.scrollbar_width,
+                state_ptr.scroll_region_rect.y,
+                style.scrollbar_width,
+                state_ptr.scroll_region_rect.h
+            };
+            ui_cmd_rect(track_rect, style.color_scrollbar_bg);
+
+            visible_fraction := clamp(state_ptr.scroll_region_rect.h / state_ptr.content_h, 0.0, 1.0);
+            grab_h := max(track_rect.h * visible_fraction, 20.0);
+            grab_h = min(grab_h, track_rect.h);
+            scroll_fraction := ifx max_scroll > 0 then state_ptr.scroll_y / max_scroll else 0.0;
+            grab_y := track_rect.y + scroll_fraction * (track_rect.h - grab_h);
+            grab_rect: UI_Rect = .{track_rect.x, grab_y, track_rect.w, grab_h};
+
+            scrollbar_id := ui_hash_fnv1a("#scroll_region_scrollbar", scroll_id);
+            ui_try_hot(scrollbar_id, track_rect);
+            ui_try_active(scrollbar_id);
+            if ui_is_active(scrollbar_id) && ctx.mouse.left_down {
+                track_scroll_h := max(1.0, track_rect.h - grab_h);
+                t := (ctx.mouse.y - track_rect.y - grab_h * 0.5) / track_scroll_h;
+                state_ptr.scroll_y = clamp(t, 0.0, 1.0) * max_scroll;
+                ctx.scroll_consumed = true;
+            }
+
+            grab_color := ifx ui_is_active(scrollbar_id) then style.color_accent
+                          else ifx ui_is_hot(scrollbar_id) then style.color_bg_hover
+                          else style.color_scrollbar_grab;
+            ui_cmd_rect(grab_rect, grab_color);
+        }
 
         // apply scroll  only if no inner region already consumed it
         if !ctx.scroll_consumed && ctx.mouse.scroll_y != 0 {
             if rect_contains(state_ptr.scroll_region_rect, ctx.mouse.x, ctx.mouse.y) {
-                max_scroll := state_ptr.content_h - state_ptr.scroll_region_rect.h;
                 if max_scroll > 0 {
                     state_ptr.scroll_y -= ctx.mouse.scroll_y * 30.0;
                     state_ptr.scroll_y = clamp(state_ptr.scroll_y, 0.0, max_scroll);
@@ -1650,10 +1672,6 @@ ui_is_window_open :: (title: string) -> bool {
     return true;
 }
 
-<<<<<<< Updated upstream
-ui_window_title_id :: (title: string) -> UI_Id {
-    return ui_hash_fnv1a("#title", ui_window_id(title));
-=======
 ui_mouse_over_open_window :: () -> bool {
     ctx := ui_ctx;
     for * state, id: ctx.window_states {
@@ -1666,33 +1684,12 @@ ui_mouse_over_open_window :: () -> bool {
         if rect_contains(rect, ctx.mouse.x, ctx.mouse.y) return true;
     }
     return false;
->>>>>>> Stashed changes
 }
 
 ui_window_rect :: (title: string) -> UI_Rect, bool {
     id := ui_window_id(title);
     state_ptr := table_find_pointer(*ui_ctx.window_states, id);
     if state_ptr == null return .{}, false;
-<<<<<<< Updated upstream
-    return state_ptr.rect, state_ptr.open;
-}
-
-ui_window_title_rect :: (title: string) -> UI_Rect, bool {
-    rect, ok := ui_window_rect(title);
-    if !ok return .{}, false;
-    return .{rect.x, rect.y, rect.w, ui_ctx.style.window_title_height}, true;
-}
-
-ui_window_title_is_active :: (title: string) -> bool {
-    return ui_ctx.active == ui_window_title_id(title);
-}
-
-ui_window_title_released_over :: (dragged_title: string, target_title: string) -> bool {
-    if !ui_window_title_is_active(dragged_title) || !ui_ctx.mouse.left_released return false;
-    target_rect, ok := ui_window_title_rect(target_title);
-    if !ok return false;
-    return rect_contains(target_rect, ui_ctx.mouse.x, ui_ctx.mouse.y);
-=======
     return state_ptr.rect, true;
 }
 
@@ -1709,7 +1706,6 @@ ui_window_set_rect :: (title: string, rect: UI_Rect) {
     state_ptr := table_find_pointer(*ui_ctx.window_states, id);
     if state_ptr == null return;
     state_ptr.rect = rect;
->>>>>>> Stashed changes
 }
 
 ui_window_z_order :: (title: string) -> s32 {
@@ -1719,25 +1715,6 @@ ui_window_z_order :: (title: string) -> s32 {
     return state_ptr.z_order;
 }
 
-<<<<<<< Updated upstream
-ui_window_force_front :: (title: string) {
-    id := ui_window_id(title);
-    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
-    if state_ptr != null {
-        state_ptr.z_order = ui_ctx.next_z_order;
-        ui_ctx.next_z_order += 1;
-    }
-}
-
-ui_window_set_rect :: (title: string, rect: UI_Rect) {
-    id := ui_window_id(title);
-    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
-    if state_ptr != null {
-        state_ptr.rect = rect;
-    }
-}
-
-=======
 ui_window_title_is_active :: (title: string) -> bool {
     id := ui_window_id(title);
     title_id := ui_hash_fnv1a("#title", id);
@@ -1752,7 +1729,6 @@ ui_window_title_released_over :: (dragged_title: string, target_title: string) -
     title_rect: UI_Rect = .{target_rect.x, target_rect.y, target_rect.w, ui_ctx.style.window_title_height};
     return rect_contains(title_rect, ui_ctx.mouse.x, ui_ctx.mouse.y);
 }
->>>>>>> Stashed changes
 
 ui_drag_float :: (label: string, value: *float32, speed: float32 = 0.1, min_val: float32 = -1000000, max_val: float32 = 1000000) -> bool {
     ctx := ui_ctx;
@@ -1952,25 +1928,10 @@ UI_File_Select_Entry :: struct {
     name: string;
     full_path: string;
     is_directory: bool;
-<<<<<<< Updated upstream
-    had_error: bool;
-=======
->>>>>>> Stashed changes
     size: s64;
     modification_time: Apollo_Time;
 }
 
-<<<<<<< Updated upstream
-UI_File_Search_Mode :: enum s32 {
-    FILENAME;
-    CONTENTS;
-}
-
-UI_File_Create_Mode :: enum {
-    NONE;
-    FILE;
-    DIRECTORY;
-=======
 UI_File_Select_Mode :: enum {
     FILE;
     DIRECTORY;
@@ -1995,7 +1956,6 @@ UI_File_Select_Context_Kind :: enum {
     NONE;
     ENTRY_DIRECTORY;
     PLACE;
->>>>>>> Stashed changes
 }
 
 UI_File_Select_State :: struct {
@@ -2027,7 +1987,6 @@ UI_File_Select_State :: struct {
     initialized: bool;
     places_loaded: bool;
     needs_refresh: bool;
-    show_dotfiles: bool;
     name_column_width: float32;
     size_column_width: float32;
 
@@ -2041,12 +2000,6 @@ UI_File_Select_State :: struct {
     search_done: bool;
     search_had_error: bool;
     search_status: string;
-
-    create_mode: UI_File_Create_Mode;
-    create_name_buffer: [256] u8;
-    create_name_length: s32;
-    had_error: bool;
-    error_message: string;
 }
 
 ui_file_select_free_entries :: (state: *UI_File_Select_State) {
@@ -2057,30 +2010,11 @@ ui_file_select_free_entries :: (state: *UI_File_Select_State) {
     array_reset(*state.entries);
 }
 
-<<<<<<< Updated upstream
-ui_file_select_free_search :: (state: *UI_File_Select_State) {
-    for state.search_files    free(it);
-    for state.search_results  free(it);
-    array_reset(*state.search_files);
-    array_reset(*state.search_results);
-    if state.search_status.count  free(state.search_status);
-    state.search_status = "";
-    state.search_files_collected = 0;
-    state.search_files_searched = 0;
-    state.search_done = false;
-    state.search_had_error = false;
-}
-
-ui_file_select_set_search_status :: (state: *UI_File_Select_State, message: string) {
-    if state.search_status.count  free(state.search_status);
-    state.search_status = copy_string(message);
-=======
 ui_file_select_free_places :: (state: *UI_File_Select_State) {
     for state.places {
         free(it);
     }
     array_reset(*state.places);
->>>>>>> Stashed changes
 }
 
 ui_file_select_set_selected_path :: (state: *UI_File_Select_State, path: string) {
@@ -2088,20 +2022,14 @@ ui_file_select_set_selected_path :: (state: *UI_File_Select_State, path: string)
     state.selected_path = copy_string(path);
 }
 
-<<<<<<< Updated upstream
-ui_file_select_set_error :: (state: *UI_File_Select_State, message: string) {
-    if state.error_message.count  free(state.error_message);
-    state.error_message = copy_string(message);
-    state.had_error = message.count > 0;
-}
-
-ui_file_select_clear_error :: (state: *UI_File_Select_State) {
-    ui_file_select_set_error(state, "");
-=======
 ui_file_select_clear_create_error :: (state: *UI_File_Select_State) {
     if state.create_error.count  free(state.create_error);
     state.create_error = "";
->>>>>>> Stashed changes
+}
+
+ui_file_select_set_error :: (state: *UI_File_Select_State, message: string) {
+    ui_file_select_clear_create_error(state);
+    state.create_error = copy_string(message);
 }
 
 ui_file_select_sync_path_buffer :: (state: *UI_File_Select_State) {
@@ -2298,378 +2226,6 @@ ui_file_select_parent_directory :: (directory: string) -> string {
 
 ui_file_select_join_path :: (directory: string, name: string) -> string {
     if directory.count == 0 return copy_string(name);
-<<<<<<< Updated upstream
-    if directory[directory.count - 1] == #char "/" || directory[directory.count - 1] == #char "\\" {
-        return tprint("%%", directory, name);
-    }
-    return tprint("%/%", directory, name);
-}
-
-ui_file_select_format_size :: (entry: *UI_File_Select_Entry) -> string {
-    if entry.is_directory return "<dir>";
-    if entry.had_error || entry.size < 0 return "";
-
-    bytes := cast(u64) entry.size;
-    base := cast(u64) 1024;
-    unit_index := 0;
-    divisor: u64 = 1;
-    remaining := bytes;
-
-    while remaining >= base && unit_index < 4 {
-        remaining /= base;
-        divisor *= base;
-        unit_index += 1;
-    }
-
-    suffix := ifx unit_index == 0 then "B" else ifx unit_index == 1 then "KiB" else ifx unit_index == 2 then "MiB" else ifx unit_index == 3 then "GiB" else "TiB";
-    if unit_index == 0 return tprint("% %", bytes, suffix);
-
-    whole := bytes / divisor;
-    remainder := bytes % divisor;
-    tenth := (remainder * 10 + divisor / 2) / divisor;
-    if tenth == 10 {
-        whole += 1;
-        tenth = 0;
-    }
-
-    if tenth == 0 return tprint("% %", whole, suffix);
-    return tprint("% %", tprint("%.%", whole, tenth), suffix);
-}
-
-ui_file_select_format_modified :: (entry: *UI_File_Select_Entry) -> string {
-    if entry.had_error return "";
-
-    cal := to_calendar(entry.modification_time, .LOCAL);
-    return tprint("%-%-% %:%",
-        formatInt(cal.year, minimum_digits = 4),
-        formatInt(cal.month_starting_at_0 + 1, minimum_digits = 2),
-        formatInt(cal.day_of_month_starting_at_0 + 1, minimum_digits = 2),
-        formatInt(cal.hour, minimum_digits = 2),
-        formatInt(cal.minute, minimum_digits = 2)
-    );
-}
-
-ui_file_select_draw_cell :: (rect: UI_Rect, text: string, color: Vector4, align_right := false) {
-    if rect.w <= 0 || rect.h <= 0 || text.count == 0 return;
-
-    style := *ui_ctx.style;
-    pad := style.padding * 0.65;
-    text_x := rect.x + pad;
-    if align_right {
-        text_w := msdf_measure_text_pixels(ui_ctx.font, text, style.font_size);
-        text_x = rect.x + rect.w - text_w - pad;
-    }
-    text_y := ui_text_baseline_y(rect, style.font_size);
-
-    ui_cmd_scissor_push(rect);
-    ui_cmd_text(text, text_x, text_y, style.font_size, color);
-    ui_cmd_scissor_pop();
-}
-
-ui_file_select_column_rects :: (table_rect: UI_Rect, name_w: float32, size_w: float32) -> (UI_Rect, UI_Rect, UI_Rect) {
-    name_rect := UI_Rect.{table_rect.x, table_rect.y, name_w, table_rect.h};
-    size_rect := UI_Rect.{name_rect.x + name_rect.w, table_rect.y, size_w, table_rect.h};
-    modified_rect := UI_Rect.{size_rect.x + size_rect.w, table_rect.y, table_rect.w - name_w - size_w, table_rect.h};
-    return name_rect, size_rect, modified_rect;
-}
-
-ui_file_select_table_inner_rect :: (rect: UI_Rect) -> UI_Rect {
-    style := *ui_ctx.style;
-    return .{
-        rect.x + style.padding,
-        rect.y,
-        max(0.0, rect.w - style.padding * 2 - style.scrollbar_width),
-        rect.h
-    };
-}
-
-ui_file_select_clamp_columns :: (state: *UI_File_Select_State, available_w: float32) {
-    min_name: float32 = 120.0;
-    min_size: float32 = 76.0;
-    min_modified: float32 = 128.0;
-
-    if state.name_column_width <= 0  state.name_column_width = max(min_name, available_w * 0.52);
-    if state.size_column_width <= 0  state.size_column_width = 92.0;
-
-    state.name_column_width = clamp(state.name_column_width, min_name, max(min_name, available_w - min_size - min_modified));
-    state.size_column_width = clamp(state.size_column_width, min_size, max(min_size, available_w - state.name_column_width - min_modified));
-
-    if state.name_column_width + state.size_column_width + min_modified > available_w {
-        state.name_column_width = max(min_name, available_w - state.size_column_width - min_modified);
-    }
-}
-
-ui_file_select_column_resizer :: (id_label: string, x: float32, y: float32, h: float32, delta: *float32) {
-    id := ui_get_id(id_label);
-    rect := UI_Rect.{x - 4, y, 8, h};
-    ui_try_hot(id, rect);
-    ui_try_active(id);
-
-    if ui_is_active(id) && ui_ctx.mouse.left_down {
-        delta.* += ui_ctx.mouse.dx;
-    }
-
-    color := ifx ui_is_active(id) then ui_ctx.style.color_accent else ifx ui_is_hot(id) then ui_ctx.style.color_text_disabled else ui_ctx.style.color_separator;
-    ui_cmd_rect(.{x - 1, y + 3, 2, h - 6}, color);
-}
-
-ui_file_select_footer_button :: (label: string, rect: UI_Rect) -> bool {
-    style := *ui_ctx.style;
-    id := ui_get_id(label);
-
-    ui_try_hot(id, rect);
-    ui_try_active(id);
-    clicked := ui_was_clicked(id);
-    if clicked  ui_emit_audio(.BUTTON_CLICK, id);
-
-    bg: Vector4;
-    if ui_is_active(id)      bg = style.color_bg_active;
-    else if ui_is_hot(id)    bg = style.color_bg_hover;
-    else                     bg = style.color_bg;
-
-    ui_cmd_rect(rect, bg);
-    ui_cmd_rect_outline(rect, style.color_border);
-
-    text_x := ui_text_centered_x(rect, label, style.font_size);
-    text_y := ui_text_baseline_y(rect, style.font_size);
-    ui_cmd_text(label, text_x, text_y, style.font_size, style.color_text);
-
-    return clicked;
-}
-
-ui_file_select_string_contains :: (haystack: string, needle: string) -> bool {
-    if needle.count == 0 return true;
-    if haystack.count < needle.count return false;
-
-    last := haystack.count - needle.count;
-    for start: 0..last {
-        matched := true;
-        for i: 0..needle.count - 1 {
-            if haystack[start + i] != needle[i] {
-                matched = false;
-                break;
-            }
-        }
-        if matched return true;
-    }
-
-    return false;
-}
-
-ui_file_select_search_collect_files :: (state: *UI_File_Select_State) -> bool {
-    visitor :: (info: *File_Visit_Info, state: *UI_File_Select_State) {
-        if info.is_directory {
-            if !state.show_dotfiles && info.short_name.count > 0 && info.short_name[0] == #char "." {
-                info.descend_into_directory = false;
-            }
-            return;
-        }
-
-        if !state.show_dotfiles && info.short_name.count > 0 && info.short_name[0] == #char "." return;
-
-        path := copy_string(info.full_name);
-        normalize_slashes(path);
-        ui_file_select_collapse_drive_root_slashes(*path);
-        array_add(*state.search_files, path);
-    }
-
-    return visit_files(state.current_directory, true, state, visitor, visit_files = true, visit_directories = true, follow_directory_symlinks = false);
-}
-
-ui_file_select_run_search :: (state: *UI_File_Select_State) {
-    query: string;
-    query.data = state.search_query_buffer.data;
-    query.count = state.search_query_length;
-
-    ui_file_select_free_search(state);
-
-    if query.count == 0 {
-        ui_file_select_set_search_status(state, "Enter a search query.");
-        state.search_done = true;
-        return;
-    }
-
-    collect_ok := ui_file_select_search_collect_files(state);
-    state.search_files_collected = cast(s32) state.search_files.count;
-
-    if !collect_ok {
-        state.search_had_error = true;
-        ui_file_select_set_search_status(state, "Could not recursively search this directory.");
-        state.search_done = true;
-        return;
-    }
-
-    for path: state.search_files {
-        state.search_files_searched += 1;
-
-        matches := false;
-        if state.search_mode == xx UI_File_Search_Mode.FILENAME {
-            matches = ui_file_select_string_contains(path, query);
-        } else {
-            contents, ok := read_entire_file(path, log_errors = false);
-            if ok {
-                matches = ui_file_select_string_contains(contents, query);
-                free(contents);
-            }
-        }
-
-        if matches {
-            array_add(*state.search_results, copy_string(path));
-        }
-    }
-
-    state.search_done = true;
-    ui_file_select_set_search_status(state, tprint("Found % match(es) in % file(s).", state.search_results.count, state.search_files.count));
-}
-
-ui_file_select_draw_search_panel :: (state: *UI_File_Select_State) {
-    if !ui_collapsing_header("Search", false) return;
-
-    ui_text_input("Find", *state.search_query_buffer, *state.search_query_length);
-
-    ui_begin_row();
-    ui_radio("Filename", *state.search_mode, xx UI_File_Search_Mode.FILENAME);
-    ui_radio("Contents", *state.search_mode, xx UI_File_Search_Mode.CONTENTS);
-    ui_end_row();
-
-    ui_begin_row();
-    if ui_button("Search") {
-        ui_file_select_run_search(state);
-    }
-    if ui_button("Clear Search") {
-        state.search_query_length = 0;
-        state.search_query_buffer[0] = 0;
-        ui_file_select_free_search(state);
-    }
-    ui_end_row();
-
-    progress := 0.0;
-    if state.search_files_collected > 0 {
-        progress = cast(float32) state.search_files_searched / cast(float32) state.search_files_collected;
-    } else if state.search_done {
-        progress = 1.0;
-    }
-    progress_label := ifx state.search_done then state.search_status else tprint("% / % files", state.search_files_searched, state.search_files_collected);
-    ui_progress_bar(progress, progress_label);
-
-    if state.search_results.count > 0 {
-        result_h := min(120.0, cast(float32) state.search_results.count * (ui_ctx.style.font_size + ui_ctx.style.padding));
-        layout := ui_current_layout();
-        result_outer_rect := UI_Rect.{layout.cursor_x + layout.indent, layout.cursor_y, layout.max_w - layout.indent, result_h};
-
-        ui_begin_scroll_region("search_results", result_h);
-        for i: 0..state.search_results.count - 1 {
-            path := state.search_results[i];
-
-            row_h := ui_ctx.style.font_size + ui_ctx.style.padding;
-            row_rect := ui_allocate_rect(0, row_h);
-            row_is_visible := row_rect.y + row_rect.h >= result_outer_rect.y &&
-                              row_rect.y <= result_outer_rect.y + result_outer_rect.h;
-            if !row_is_visible continue;
-
-            row_id := ui_get_id(path);
-            ui_try_hot(row_id, row_rect);
-            ui_try_active(row_id);
-
-            selected := path == state.selected_path;
-            bg: Vector4;
-            if selected                  bg = ui_ctx.style.color_accent;
-            else if ui_is_active(row_id) bg = ui_ctx.style.color_bg_active;
-            else if ui_is_hot(row_id)    bg = ui_ctx.style.color_bg_hover;
-            else                         bg = .{0, 0, 0, 0};
-            if bg.w > 0  ui_cmd_rect(row_rect, bg);
-
-            ui_file_select_draw_cell(row_rect, path, ui_ctx.style.color_text);
-
-            if ui_was_clicked(row_id) {
-                ui_file_select_set_selected_path(state, path);
-                state.selected_index = -1;
-                ui_emit_audio(.BUTTON_CLICK, row_id);
-            }
-        }
-        ui_end_scroll_region();
-    }
-}
-
-ui_file_select_name_is_valid :: (name: string) -> bool {
-    if name.count == 0 return false;
-    if name == "." || name == ".." return false;
-
-    for i: 0..name.count-1 {
-        if name[i] == #char "/" || name[i] == #char "\\" return false;
-    }
-
-    return true;
-}
-
-ui_file_select_begin_create :: (state: *UI_File_Select_State, mode: UI_File_Create_Mode) {
-    state.create_mode = mode;
-    state.create_name_length = 0;
-    state.create_name_buffer[0] = 0;
-
-    title := ifx mode == .DIRECTORY then "New Directory" else "New File";
-    ui_set_window_open(title, true);
-}
-
-ui_file_select_finish_create :: (state: *UI_File_Select_State) -> bool {
-    name: string;
-    name.data = state.create_name_buffer.data;
-    name.count = state.create_name_length;
-
-    if !ui_file_select_name_is_valid(name) {
-        ui_file_select_set_error(state, "Use a simple name without slashes.");
-        return false;
-    }
-
-    new_path := ui_file_select_join_path(state.current_directory, name);
-
-    ok := false;
-    if state.create_mode == .DIRECTORY {
-        ok = make_directory_if_it_does_not_exist(new_path, recursive = false);
-    } else if state.create_mode == .FILE {
-        if file_exists(new_path) {
-            ui_file_select_set_error(state, tprint("Already exists: %", new_path));
-            return false;
-        }
-        ok = write_entire_file(new_path, "");
-    }
-
-    if !ok {
-        ui_file_select_set_error(state, tprint("Could not create: %", new_path));
-        return false;
-    }
-
-    ui_file_select_clear_error(state);
-    state.needs_refresh = true;
-
-    if state.create_mode == .FILE {
-        ui_file_select_set_selected_path(state, new_path);
-    }
-
-    state.create_mode = .NONE;
-    return true;
-}
-
-ui_file_select_create_dialog :: (state: *UI_File_Select_State) {
-    if state.create_mode == .NONE return;
-
-    title := ifx state.create_mode == .DIRECTORY then "New Directory" else "New File";
-    if ui_begin_window(title, 460, 140, 340, 150) {
-        ui_text_input("Name", *state.create_name_buffer, *state.create_name_length);
-
-        ui_begin_row();
-        if ui_button("OK") {
-            if ui_file_select_finish_create(state) {
-                ui_set_window_open(title, false);
-            }
-        }
-        ui_end_row();
-
-        ui_end_window();
-    } else if !ui_is_window_open(title) {
-        state.create_mode = .NONE;
-    }
-=======
     if directory[directory.count - 1] == #char "/" return tprint("%%", directory, name);
     return tprint("%/%", directory, name);
 }
@@ -2806,19 +2362,14 @@ ui_file_select_set_sort :: (state: *UI_File_Select_State, column: UI_File_Select
     }
     ui_file_select_sort_entries(state);
     ui_file_select_sync_selected_index(state);
->>>>>>> Stashed changes
 }
 
 ui_file_select_refresh :: (state: *UI_File_Select_State) {
     ui_file_select_free_entries(state);
-    ui_file_select_clear_error(state);
+    ui_file_select_clear_create_error(state);
     state.selected_index = -1;
     state.needs_refresh = false;
 
-<<<<<<< Updated upstream
-    visitor :: (info: *File_Visit_Info, state: *UI_File_Select_State) {
-        if !state.show_dotfiles && info.short_name.count > 0 && info.short_name[0] == #char "." return;
-=======
     Visitor_Context :: struct {
         entries: *[..] UI_File_Select_Entry;
         mode: UI_File_Select_Mode;
@@ -2829,7 +2380,6 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
         if ui_file_select_is_default_ignored(info.short_name) return;
         if !ctx.show_dotfiles && ui_file_select_is_dotfile(info.short_name) return;
         if ctx.mode == .DIRECTORY && !info.is_directory return;
->>>>>>> Stashed changes
 
         entry: UI_File_Select_Entry;
         entry.name = copy_string(info.short_name);
@@ -2837,30 +2387,6 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
         normalize_slashes(entry.full_path);
         ui_file_select_collapse_drive_root_slashes(*entry.full_path);
         entry.is_directory = info.is_directory;
-<<<<<<< Updated upstream
-        entry.had_error = info.had_error;
-        entry.size = info.size;
-        entry.modification_time = info.modification_time;
-        if !add_modtime_and_size_if_missing(info) {
-            entry.had_error = true;
-        } else {
-            entry.size = info.size;
-            entry.modification_time = info.modification_time;
-        }
-
-        array_add(*state.entries, entry);
-        if entry.is_directory {
-            index := state.entries.count - 1;
-            while index > 0 && state.entries[index - 1].is_directory == false {
-                state.entries[index] = state.entries[index - 1];
-                index -= 1;
-            }
-            state.entries[index] = entry;
-        }
-    }
-
-    ok := visit_files(state.current_directory, false, state, visitor, visit_files = true, visit_directories = true, follow_directory_symlinks = false);
-=======
         entry.size = info.size;
         entry.modification_time = info.modification_time;
 
@@ -2869,7 +2395,6 @@ ui_file_select_refresh :: (state: *UI_File_Select_State) {
 
     ctx: Visitor_Context = .{*state.entries, state.mode, state.show_dotfiles};
     ok := visit_files(state.current_directory, false, *ctx, visitor, visit_files = state.mode == .FILE, visit_directories = true, follow_directory_symlinks = false);
->>>>>>> Stashed changes
     if !ok {
         ui_file_select_set_error(state, tprint("Could not open directory: %", state.current_directory));
     }
@@ -3293,13 +2818,10 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     }
     ui_end_row();
 
-<<<<<<< Updated upstream
-=======
     if ui_checkbox("Show dotfiles", *state.show_dotfiles) {
         state.needs_refresh = true;
     }
 
->>>>>>> Stashed changes
     ui_begin_row();
     if ui_button("New File") {
         ui_file_select_begin_create(state, .FILE);
@@ -3309,69 +2831,13 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
     }
     ui_end_row();
 
-<<<<<<< Updated upstream
-    ui_file_select_draw_search_panel(state);
-
-=======
->>>>>>> Stashed changes
-    if state.had_error {
-        ui_label_colored(state.error_message, .{1.0, 0.35, 0.25, 1.0});
+    if state.create_error.count > 0 {
+        ui_label_colored(state.create_error, .{1.0, 0.35, 0.25, 1.0});
     }
 
     ui_label(tprint("Current: %", state.current_directory));
 
     style := *ui_ctx.style;
-<<<<<<< Updated upstream
-    header_h := style.font_size + style.padding * 1.2;
-    header_rect := ui_allocate_rect(0, header_h);
-    header_table_rect := ui_file_select_table_inner_rect(header_rect);
-    ui_file_select_clamp_columns(state, header_table_rect.w);
-
-    name_header, size_header, modified_header := ui_file_select_column_rects(header_table_rect, state.name_column_width, state.size_column_width);
-
-    ui_cmd_rect(header_rect, .{0.105, 0.112, 0.124, 1.0});
-    ui_cmd_rect(.{header_rect.x, header_rect.y + header_rect.h - 1, header_rect.w, 1}, style.color_border);
-    ui_file_select_draw_cell(name_header, "Name", style.color_text_disabled);
-    ui_file_select_draw_cell(size_header, "Size", style.color_text_disabled);
-    ui_file_select_draw_cell(modified_header, "Modified", style.color_text_disabled);
-
-    ui_file_select_column_resizer("name_size_separator", name_header.x + name_header.w, header_rect.y, header_rect.h, *state.name_column_width);
-    ui_file_select_column_resizer("size_modified_separator", size_header.x + size_header.w, header_rect.y, header_rect.h, *state.size_column_width);
-    ui_file_select_clamp_columns(state, header_table_rect.w);
-
-    selected_h := style.font_size + style.padding;
-    footer_h := selected_h + style.button_height + style.item_spacing + style.padding * 2;
-
-    layout := ui_current_layout();
-    visible_bottom := layout.origin_y + layout.visible_h;
-    footer_top := visible_bottom - footer_h;
-    if footer_top < layout.cursor_y  footer_top = layout.cursor_y;
-
-    scroll_h := footer_top - layout.cursor_y;
-    scroll_h = clamp(scroll_h, 0.0, 260.0);
-
-    scroll_outer_rect := UI_Rect.{layout.cursor_x + layout.indent, layout.cursor_y, layout.max_w - layout.indent, scroll_h};
-    scroll_table_rect := ui_file_select_table_inner_rect(scroll_outer_rect);
-
-    ui_begin_scroll_region("file_select_entries", scroll_h);
-    for i : 0..state.entries.count-1 {
-        entry := *state.entries[i];
-        row_h := style.font_size + style.padding * 1.15;
-        row_rect := ui_allocate_rect(0, row_h);
-        row_rect.x = scroll_table_rect.x;
-        row_rect.w = scroll_table_rect.w;
-
-        row_is_visible := row_rect.y + row_rect.h >= scroll_outer_rect.y &&
-                          row_rect.y <= scroll_outer_rect.y + scroll_outer_rect.h;
-        if !row_is_visible continue;
-
-        row_id := ui_get_id(entry.full_path);
-        ui_try_hot(row_id, row_rect);
-        ui_try_active(row_id);
-
-        is_selected := state.selected_index == cast(s32) i;
-        if ui_was_clicked(row_id) {
-=======
     row_h := style.font_size + style.padding;
     reserved_h := row_h + style.button_height + style.item_spacing * 3;
     table_total_h := ui_available_height() - reserved_h;
@@ -3439,7 +2905,6 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
             ui_file_select_open_context_menu(state, .ENTRY_DIRECTORY, entry.full_path, cast(s32) i);
         }
         if clicked {
->>>>>>> Stashed changes
             if entry.is_directory {
                 ui_file_select_set_directory(state, entry.full_path);
             } else {
@@ -3447,51 +2912,14 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
                 ui_file_select_set_selected_path(state, entry.full_path);
             }
         }
-
-        bg: Vector4;
-        if is_selected       bg = .{0.22, 0.36, 0.54, 0.88};
-        else if ui_is_hot(row_id) bg = .{0.20, 0.22, 0.25, 1.0};
-        else if i % 2 == 0   bg = .{0.145, 0.150, 0.162, 1.0};
-        else                 bg = .{0.118, 0.123, 0.135, 1.0};
-        ui_cmd_rect(row_rect, bg);
-
-        row_table_rect := UI_Rect.{row_rect.x, row_rect.y, scroll_table_rect.w, row_rect.h};
-        name_rect, size_rect, modified_rect := ui_file_select_column_rects(row_table_rect, state.name_column_width, state.size_column_width);
-
-        ui_cmd_rect(.{size_rect.x, row_rect.y, 1, row_rect.h}, .{0.22, 0.23, 0.25, 0.65});
-        ui_cmd_rect(.{modified_rect.x, row_rect.y, 1, row_rect.h}, .{0.22, 0.23, 0.25, 0.65});
-
-        name_text := ifx entry.is_directory then tprint("%/", entry.name) else entry.name;
-        name_color := ifx entry.is_directory then .{0.64, 0.78, 1.00, 1.0} else style.color_text;
-        ui_file_select_draw_cell(name_rect, name_text, name_color);
-        ui_file_select_draw_cell(size_rect, ui_file_select_format_size(entry), style.color_text_disabled);
-        ui_file_select_draw_cell(modified_rect, ui_file_select_format_modified(entry), style.color_text_disabled);
     }
     ui_end_scroll_region();
     ui_pop_layout();
     ui_file_select_render_context_menu(state);
 
-    footer_top = max(visible_bottom - footer_h, layout.origin_y);
-    footer_x := layout.origin_x + layout.indent;
-    footer_w := layout.max_w - layout.indent;
-    selected_rect := UI_Rect.{footer_x, footer_top + style.padding, footer_w, selected_h};
-
     if state.selected_path.count > 0 {
-        ui_file_select_draw_cell(selected_rect, tprint("Selected: %", state.selected_path), style.color_text);
+        ui_label(tprint("Selected: %", state.selected_path));
     } else {
-<<<<<<< Updated upstream
-        ui_file_select_draw_cell(selected_rect, "Selected: <none>", style.color_text_disabled);
-    }
-
-    button_y := selected_rect.y + selected_rect.h + style.item_spacing;
-    open_w := msdf_measure_text_pixels(ui_ctx.font, "Open", style.font_size) + style.padding * 2;
-    clear_w := msdf_measure_text_pixels(ui_ctx.font, "Clear", style.font_size) + style.padding * 2;
-    open_rect := UI_Rect.{footer_x, button_y, open_w, style.button_height};
-    clear_rect := UI_Rect.{open_rect.x + open_rect.w + style.item_spacing, button_y, clear_w, style.button_height};
-
-    if ui_file_select_footer_button("Open", open_rect) {
-        if state.selected_path.count > 0 {
-=======
         selected_text := ifx state.mode == .DIRECTORY then tprint("Selected: current directory") else "Selected: <none>";
         ui_label_disabled(selected_text);
     }
@@ -3503,17 +2931,14 @@ ui_file_select :: (label: string, state: *UI_File_Select_State, start_directory:
             ui_file_select_set_selected_path(state, state.current_directory);
             changed = true;
         } else if state.selected_path.count > 0 {
->>>>>>> Stashed changes
             changed = true;
         }
     }
-    if ui_file_select_footer_button("Clear", clear_rect) {
+    if ui_button("Clear") {
         state.selected_index = -1;
         ui_file_select_set_selected_path(state, "");
     }
-
-    footer_bottom := button_y + style.button_height;
-    if footer_bottom > layout.content_max_y  layout.content_max_y = footer_bottom;
+    ui_end_row();
 
     return changed;
 }
@@ -3547,18 +2972,11 @@ ui_file_select_create_dialog :: (state: *UI_File_Select_State) {
 
 ui_file_select_destroy :: (state: *UI_File_Select_State) {
     ui_file_select_free_entries(state);
-<<<<<<< Updated upstream
-    ui_file_select_free_search(state);
-    if state.current_directory.count  free(state.current_directory);
-    if state.selected_path.count      free(state.selected_path);
-    if state.error_message.count      free(state.error_message);
-=======
     ui_file_select_free_places(state);
     if state.current_directory.count  free(state.current_directory);
     if state.selected_path.count      free(state.selected_path);
     if state.context_path.count       free(state.context_path);
     ui_file_select_clear_create_error(state);
->>>>>>> Stashed changes
     state.* = .{};
 }
 
