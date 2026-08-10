@@ -69,6 +69,7 @@ MSDF_Text_Geometry :: struct {
     indices             : [..] u32;
     positions           : [..] Vector3;
     texture_coordinates : [..] Vector2;
+    rgba_colors         : [..] Vector4;
 }
 
 msdf_load_atlas_texture :: (png_path: string) -> GLuint {
@@ -183,8 +184,10 @@ msdf_append_text_geometry :: (
     font_size_px: float32,
     window_w: float32,
     window_h: float32,
+    color: Vector4,
     positions: *[..] Vector3,
     texture_coordinates: *[..] Vector2,
+    rgba_colors: *[..] Vector4,
     indices: *[..] u32
 ) -> total_advance_px : float32 {
     cursor_x_px := left_edge_x_px;
@@ -199,6 +202,7 @@ msdf_append_text_geometry :: (
 
     array_reserve(positions, positions.count + visible_count * 4);
     array_reserve(texture_coordinates, texture_coordinates.count + visible_count * 4);
+    array_reserve(rgba_colors, rgba_colors.count + visible_count * 4);
     array_reserve(indices, indices.count + visible_count * 6);
 
     vertex_index := cast(u32) positions.count;
@@ -253,6 +257,11 @@ msdf_append_text_geometry :: (
             array_add(texture_coordinates, .{u1, v0});
             array_add(texture_coordinates, .{u0, v0});
 
+            array_add(rgba_colors, color);
+            array_add(rgba_colors, color);
+            array_add(rgba_colors, color);
+            array_add(rgba_colors, color);
+
             array_add(indices, vertex_index + 0);
             array_add(indices, vertex_index + 2);
             array_add(indices, vertex_index + 1);
@@ -289,8 +298,10 @@ msdf_generate_text_geometry :: (
         font_size_px,
         window_w,
         window_h,
+        .{1, 1, 1, 1},
         *geometry.positions,
         *geometry.texture_coordinates,
+        *geometry.rgba_colors,
         *geometry.indices
     );
 
@@ -301,6 +312,7 @@ msdf_text_geometry_free :: (geometry: *MSDF_Text_Geometry) {
     array_free(geometry.indices);
     array_free(geometry.positions);
     array_free(geometry.texture_coordinates);
+    array_free(geometry.rgba_colors);
 }
 
 // measurement
@@ -342,7 +354,21 @@ msdf_draw_text_immediate :: (
     window_w: float32,
     window_h: float32
 ) {
-    geometry, total_advance := msdf_generate_text_geometry(font, text, left_edge_x_px, baseline_y_px, font_size_px, window_w, window_h);
+    geometry: MSDF_Text_Geometry;
+    msdf_append_text_geometry(
+        font,
+        text,
+        left_edge_x_px,
+        baseline_y_px,
+        font_size_px,
+        window_w,
+        window_h,
+        color,
+        *geometry.positions,
+        *geometry.texture_coordinates,
+        *geometry.rgba_colors,
+        *geometry.indices
+    );
     defer msdf_text_geometry_free(*geometry);
 
     if geometry.indices.count == 0 return;
@@ -354,7 +380,6 @@ msdf_draw_text_immediate :: (
     glBindTexture(GL_TEXTURE_2D, font.texture_id);
 
     set_texture_sampler_uniform(renderer, 0);
-    set_rgba_color_uniform(renderer, color);
     set_aspect_ratio_uniform(renderer, .{1.0, 1.0});
     px_range := msdf_screen_pixels_per_distance_range(font, font_size_px);
 
@@ -363,7 +388,7 @@ msdf_draw_text_immediate :: (
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    immediate_render(renderer, geometry.indices, geometry.positions, geometry.texture_coordinates);
+    immediate_render(renderer, geometry.indices, geometry.positions, geometry.texture_coordinates, geometry.rgba_colors);
 }
 
 // rendering (buffered mode)
@@ -388,6 +413,7 @@ msdf_create_text_renderable :: (
     array_copy(*renderable.indices, geometry.indices);
     array_copy(*renderable.positions, geometry.positions);
     array_copy(*renderable.texture_coordinates, geometry.texture_coordinates);
+    array_copy(*renderable.rgba_colors, geometry.rgba_colors);
     msdf_text_geometry_free(*geometry);
 
     success := buffer_object(renderer, *renderable);
@@ -400,11 +426,24 @@ msdf_queue_text :: (
     renderable: Multi_Channel_Signed_Distance_Field_Text_Renderable,
     color: Vector4
 ) {
+    if renderable.rgba_colors.count > 0 {
+        for *renderable.rgba_colors it.* = color;
+
+        glBindVertexArray(renderer.vertex_attribute_array_gl_handle);
+        glBindBuffer(GL_ARRAY_BUFFER, renderer.passthrough_rgba_colors_buffer_gl_handle);
+        glBufferSubData(
+            GL_ARRAY_BUFFER,
+            renderable.object_index * size_of(Vector4),
+            renderable.rgba_colors.count * size_of(Vector4),
+            renderable.rgba_colors.data
+        );
+        glBindVertexArray(0);
+    }
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, font.texture_id);
 
     set_texture_sampler_uniform(renderer, 0);
-    set_rgba_color_uniform(renderer, color);
     set_aspect_ratio_uniform(renderer, .{1.0, 1.0});
 
     glEnable(GL_BLEND);

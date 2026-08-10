@@ -159,7 +159,6 @@ UI_Render_Batch :: struct {
 
     text_font_size: float32;
     text_font: *MSDF_Font;
-    text_color: Vector4;
 }
 
 UI_Frame_Draw_Buffers :: struct {
@@ -172,6 +171,7 @@ UI_Frame_Draw_Buffers :: struct {
     text_indices: [..] u32;
     text_positions: [..] Vector3;
     text_texture_coordinates: [..] Vector2;
+    text_rgba_colors: [..] Vector4;
 
     image_indices: [..] u32;
     image_positions: [..] Vector3;
@@ -900,7 +900,7 @@ ui_draw_cmd_can_merge :: (a: UI_Draw_Cmd, b: UI_Draw_Cmd) -> bool {
             return true;
 
         case .TEXT;
-            return a.font == b.font && a.font_size == b.font_size && ui_color_equal(a.color, b.color);
+            return a.font == b.font && a.font_size == b.font_size;
 
         case;
             return false;
@@ -1071,8 +1071,10 @@ ui_cmd_text_font :: (font: *MSDF_Font, text: string, left_edge_x: float32, basel
         font_size,
         ui_ctx.window_w,
         ui_ctx.window_h,
+        color,
         *buffers.text_positions,
         *buffers.text_texture_coordinates,
+        *buffers.text_rgba_colors,
         *buffers.text_indices
     );
 
@@ -1093,8 +1095,7 @@ ui_cmd_text_font :: (font: *MSDF_Font, text: string, left_edge_x: float32, basel
 }
 
 ui_cmd_texture :: (texture_id: GLuint, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1}) {
-    // Compatibility hook for callers from the newer UI branch. This checked-out
-    // UI renderer does not currently include textured quad batching.
+    ui_cmd_image(texture_id, rect, tint);
 }
 
 ui_cmd_scissor_push :: (rect: UI_Rect) {
@@ -1164,6 +1165,7 @@ ui_frame_draw_buffers_reset :: (buffers: *UI_Frame_Draw_Buffers) {
     array_reset_keeping_memory(*buffers.text_indices);
     array_reset_keeping_memory(*buffers.text_positions);
     array_reset_keeping_memory(*buffers.text_texture_coordinates);
+    array_reset_keeping_memory(*buffers.text_rgba_colors);
     array_reset_keeping_memory(*buffers.image_indices);
     array_reset_keeping_memory(*buffers.image_positions);
     array_reset_keeping_memory(*buffers.image_texture_coordinates);
@@ -1178,6 +1180,7 @@ ui_frame_draw_buffers_deinit :: (buffers: *UI_Frame_Draw_Buffers) {
     array_free(buffers.text_indices);
     array_free(buffers.text_positions);
     array_free(buffers.text_texture_coordinates);
+    array_free(buffers.text_rgba_colors);
     array_free(buffers.image_indices);
     array_free(buffers.image_positions);
     array_free(buffers.image_texture_coordinates);
@@ -1208,7 +1211,6 @@ ui_flush_render_batch :: (batch: *UI_Render_Batch) {
             glBindTexture(GL_TEXTURE_2D, font.texture_id);
 
             set_texture_sampler_uniform(ctx.msdf_renderer, 0);
-            set_rgba_color_uniform(ctx.msdf_renderer, batch.text_color);
             set_aspect_ratio_uniform(ctx.msdf_renderer, .{1.0, 1.0});
 
             px_range := msdf_screen_pixels_per_distance_range(font, batch.text_font_size);
@@ -1216,7 +1218,7 @@ ui_flush_render_batch :: (batch: *UI_Render_Batch) {
 
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            immediate_render(ctx.msdf_renderer, batch.indices, batch.positions, batch.texture_coordinates);
+            immediate_render(ctx.msdf_renderer, batch.indices, batch.positions, batch.texture_coordinates, batch.rgba_colors);
 
         case .IMAGE;
             // This legacy batch path is kept for compatibility with older helpers.
@@ -1267,8 +1269,10 @@ ui_render_batch_append_text :: (batch: *UI_Render_Batch, cmd: UI_Draw_Cmd) {
         cmd.font_size,
         ui_ctx.window_w,
         ui_ctx.window_h,
+        cmd.color,
         *batch.positions,
         *batch.texture_coordinates,
+        *batch.rgba_colors,
         *batch.indices
     );
     batch.text_font = font;
@@ -1279,11 +1283,13 @@ ui_render_batch_append_text_range :: (batch: *UI_Render_Batch, buffers: *UI_Fram
 
     array_reserve(*batch.positions, batch.positions.count + cmd.vertex_count);
     array_reserve(*batch.texture_coordinates, batch.texture_coordinates.count + cmd.vertex_count);
+    array_reserve(*batch.rgba_colors, batch.rgba_colors.count + cmd.vertex_count);
     array_reserve(*batch.indices, batch.indices.count + cmd.index_count);
 
     for i : 0..cmd.vertex_count-1 {
         array_add(*batch.positions, buffers.text_positions[cmd.vertex_offset + i]);
         array_add(*batch.texture_coordinates, buffers.text_texture_coordinates[cmd.vertex_offset + i]);
+        array_add(*batch.rgba_colors, buffers.text_rgba_colors[cmd.vertex_offset + i]);
     }
 
     for i : 0..cmd.index_count-1 {
@@ -1436,6 +1442,9 @@ ui_upload_text_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
     glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_texture_coordinates_buffer_gl_handle);
     glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_texture_coordinates.count * size_of(Vector2), buffers.text_texture_coordinates.data);
 
+    glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_rgba_colors_buffer_gl_handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_rgba_colors.count * size_of(Vector4), buffers.text_rgba_colors.data);
+
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, buffers.text_indices.count * size_of(u32), buffers.text_indices.data);
 }
@@ -1465,7 +1474,6 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
     active_type := UI_Render_Batch_Type.NONE;
     active_text_font_size: float32 = 0;
     active_text_font: *MSDF_Font = null;
-    active_text_color: Vector4;
     active_image_texture_id: GLuint = 0;
 
     for cmd : buffers.commands {
@@ -1510,12 +1518,10 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
             case .TEXT;
                 if cmd.index_count == 0 continue;
 
-                font := ifx cmd.font_override != null then cmd.font_override else ctx.font;
+                font := ifx cmd.font != null then cmd.font else ctx.font;
                 same_text_state := active_type == .TEXT &&
-                                   active_text_font == cmd.font &&
-                                   active_text_font_size == cmd.font_size &&
                                    active_text_font == font &&
-                                   ui_color_equal(active_text_color, cmd.color);
+                                   active_text_font_size == cmd.font_size;
 
                 if !same_text_state {
                     glUseProgram(ctx.msdf_renderer.shader_program_gl_handle);
@@ -1523,21 +1529,17 @@ ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
 
                     glActiveTexture(GL_TEXTURE0);
-                    font := ifx cmd.font != null then cmd.font else ctx.font;
                     glBindTexture(GL_TEXTURE_2D, font.texture_id);
 
                     set_texture_sampler_uniform(ctx.msdf_renderer, 0);
-                    set_rgba_color_uniform(ctx.msdf_renderer, cmd.color);
                     set_aspect_ratio_uniform(ctx.msdf_renderer, .{1.0, 1.0});
 
                     px_range := msdf_screen_pixels_per_distance_range(font, cmd.font_size);
                     set_screen_pixels_per_distance_range_uniform(ctx.msdf_renderer, px_range);
 
                     active_type = .TEXT;
-                    active_text_font = cmd.font;
-                    active_text_font_size = cmd.font_size;
-                    active_text_color = cmd.color;
                     active_text_font = font;
+                    active_text_font_size = cmd.font_size;
                 }
 
                 offset := cmd.index_offset * size_of(u32);
