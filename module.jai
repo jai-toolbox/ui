@@ -468,6 +468,9 @@ UI_Context :: struct {
 
     scroll_consumed: bool;
     popup_blocking_input: bool;
+    in_popup_content: bool;
+    current_popup_id: UI_Id;
+    popup_previous_overlay: bool;
 
     audio_events:      [MAX_AUDIO_EVENTS_PER_FRAME] UI_Audio_Event;
     audio_event_count: s32;
@@ -496,6 +499,8 @@ ui_init :: (
     ctx.next_z_order = 0;
     ctx.open_popup_id = UI_ID_NONE;
     ctx.drawing_overlay = false;
+    ctx.in_popup_content = false;
+    ctx.current_popup_id = UI_ID_NONE;
     ui_image_renderer_init(*ctx.image_renderer);
     ui_ctx = ctx;
 }
@@ -555,6 +560,8 @@ ui_begin_frame :: (
     ctx.id_stack_depth = 0;
     ctx.scissor_stack_depth = 0;
     ctx.scroll_consumed = false;
+    ctx.in_popup_content = false;
+    ctx.current_popup_id = UI_ID_NONE;
 
     // if a popup is open and mouse is over it, block all normal widget interaction
     ctx.popup_blocking_input = false;
@@ -598,10 +605,13 @@ ui_end_frame :: () {
     }
 
 
-    // close popup if clicked outside both the popup and any widget that claimed hot
-    if ctx.open_popup_id != UI_ID_NONE && ctx.mouse.left_pressed && ctx.hot == UI_ID_NONE {
+    // close popup if clicked outside it. If the popup trigger claimed hot this
+    // frame, keep it open so button toggles do not immediately close themselves.
+    if ctx.open_popup_id != UI_ID_NONE && ctx.mouse.left_pressed {
         if !rect_contains(ctx.popup_rect, ctx.mouse.x, ctx.mouse.y) {
-            ctx.open_popup_id = UI_ID_NONE;
+            if ctx.hot != ctx.open_popup_id {
+                ctx.open_popup_id = UI_ID_NONE;
+            }
         }
     }
 
@@ -773,8 +783,9 @@ ui_is_focused :: (id: UI_Id) -> bool {
 
 ui_try_hot :: (id: UI_Id, rect: UI_Rect) -> bool {
     ctx := ui_ctx;
-    // if a popup is blocking input, only popup items can become hot
-    if ctx.popup_blocking_input return false;
+    // if a popup is open, only popup items can become hot through the normal
+    // widget path. Popup triggers may still claim hot explicitly when toggled.
+    if ctx.open_popup_id != UI_ID_NONE && !ctx.in_popup_content return false;
     if rect_contains(rect, ctx.mouse.x, ctx.mouse.y) {
         ctx.hot = id;
         return true;
@@ -794,6 +805,13 @@ ui_try_active :: (id: UI_Id) -> bool {
 ui_was_clicked :: (id: UI_Id) -> bool {
     ctx := ui_ctx;
     return ui_is_hot(id) && ui_is_active(id) && ctx.mouse.left_released;
+}
+
+ui_close_current_popup :: () {
+    ctx := ui_ctx;
+    if ctx.current_popup_id != UI_ID_NONE {
+        ctx.open_popup_id = UI_ID_NONE;
+    }
 }
 
 // pixel-to-ndc helpers
