@@ -1747,6 +1747,16 @@ ui_window_force_front :: (title: string) {
     ui_ctx.next_z_order += 1;
 }
 
+ui_window_present :: (title: string) {
+    id := ui_window_id(title);
+    state_ptr := table_find_pointer(*ui_ctx.window_states, id);
+    if state_ptr == null return;
+    state_ptr.open = true;
+    state_ptr.collapsed = false;
+    state_ptr.z_order = ui_ctx.next_z_order;
+    ui_ctx.next_z_order += 1;
+}
+
 ui_window_set_rect :: (title: string, rect: UI_Rect) {
     id := ui_window_id(title);
     state_ptr := table_find_pointer(*ui_ctx.window_states, id);

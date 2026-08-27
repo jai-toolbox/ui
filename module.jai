@@ -100,6 +100,7 @@ UI_Keyboard_State :: struct {
     char_count:    s32;
     ctrl_held:     bool;
     shift_held:    bool;
+    alt_held:      bool;
 }
 
 // draw commands
@@ -452,6 +453,8 @@ UI_Context :: struct {
     msdf_renderer: *Multi_Channel_Signed_Distance_Field_Text_Renderer;
     rect_renderer: *Absolute_Position_Color_Alpha_Renderer;
     image_renderer: UI_Image_Renderer;
+    text_vertex_upload_capacity: s64;
+    text_index_upload_capacity: s64;
 
     window_states:     Table(UI_Id, UI_Window_State);
     text_input_states: Table(UI_Id, UI_Text_Input_State);
@@ -492,6 +495,8 @@ ui_init :: (
     ctx.font = font;
     ctx.msdf_renderer = msdf_renderer;
     ctx.rect_renderer = rect_renderer;
+    ctx.text_vertex_upload_capacity = UI_RENDER_BATCH_MAX_VERTICES;
+    ctx.text_index_upload_capacity = UI_RENDER_BATCH_MAX_INDICES;
     ctx.layout_depth = 0;
     ctx.id_stack_depth = 0;
     ctx.scissor_stack_depth = 0;
@@ -664,10 +669,11 @@ ui_push_char :: (c: u8) {
     }
 }
 
-ui_set_modifiers :: (ctrl: bool, shift: bool) {
+ui_set_modifiers :: (ctrl: bool, shift: bool, alt: bool = false) {
     ctx := ui_ctx;
     ctx.keyboard.ctrl_held = ctrl;
     ctx.keyboard.shift_held = shift;
+    ctx.keyboard.alt_held = alt;
 }
 
 // layout
@@ -1451,13 +1457,31 @@ ui_upload_text_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
     ctx := ui_ctx;
     if buffers.text_indices.count == 0 return;
 
-    if buffers.text_positions.count > UI_RENDER_BATCH_MAX_VERTICES ||
-       buffers.text_indices.count > UI_RENDER_BATCH_MAX_INDICES {
-        log_error("UI text upload exceeded immediate buffer: vertices=%, indices=%", buffers.text_positions.count, buffers.text_indices.count);
-        return;
+    glBindVertexArray(ctx.msdf_renderer.immediate_vertex_attribute_array_gl_handle);
+
+    if buffers.text_positions.count > ctx.text_vertex_upload_capacity {
+        new_capacity := max(cast(s64) UI_RENDER_BATCH_MAX_VERTICES, ctx.text_vertex_upload_capacity);
+        while new_capacity < buffers.text_positions.count  new_capacity *= 2;
+
+        glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_positions_buffer_gl_handle);
+        glBufferData(GL_ARRAY_BUFFER, new_capacity * size_of(Vector3), null, GL_STREAM_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_texture_coordinates_buffer_gl_handle);
+        glBufferData(GL_ARRAY_BUFFER, new_capacity * size_of(Vector2), null, GL_STREAM_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_rgba_colors_buffer_gl_handle);
+        glBufferData(GL_ARRAY_BUFFER, new_capacity * size_of(Vector4), null, GL_STREAM_DRAW);
+
+        ctx.text_vertex_upload_capacity = new_capacity;
     }
 
-    glBindVertexArray(ctx.msdf_renderer.immediate_vertex_attribute_array_gl_handle);
+    if buffers.text_indices.count > ctx.text_index_upload_capacity {
+        new_capacity := max(cast(s64) UI_RENDER_BATCH_MAX_INDICES, ctx.text_index_upload_capacity);
+        while new_capacity < buffers.text_indices.count  new_capacity *= 2;
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, new_capacity * size_of(u32), null, GL_STREAM_DRAW);
+
+        ctx.text_index_upload_capacity = new_capacity;
+    }
 
     glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_positions_buffer_gl_handle);
     glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_positions.count * size_of(Vector3), buffers.text_positions.data);
