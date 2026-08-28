@@ -95,6 +95,7 @@ UI_Keyboard_State :: struct {
     keys_pressed:  [32] UI_Key;
     key_ctrl_pressed:  [32] bool;
     key_shift_pressed: [32] bool;
+    key_shift_chord_clean: [32] bool;
     key_count:     s32;
     chars_entered: [64] u8;
     char_count:    s32;
@@ -650,13 +651,14 @@ ui_end_frame :: () {
 
 // keyboard input (call from your event loop)
 
-ui_push_key :: (key: UI_Key, ctrl_pressed: bool = false, shift_pressed: bool = false) {
+ui_push_key :: (key: UI_Key, ctrl_pressed: bool = false, shift_pressed: bool = false, shift_chord_clean: bool = false) {
     ctx := ui_ctx;
     if ctx.keyboard.key_count < 32 {
         index := ctx.keyboard.key_count;
         ctx.keyboard.keys_pressed[index] = key;
         ctx.keyboard.key_ctrl_pressed[index] = ctrl_pressed;
         ctx.keyboard.key_shift_pressed[index] = shift_pressed;
+        ctx.keyboard.key_shift_chord_clean[index] = shift_chord_clean;
         ctx.keyboard.key_count += 1;
     }
 }
