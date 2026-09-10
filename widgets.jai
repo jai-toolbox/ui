@@ -702,6 +702,11 @@ ui_dropdown :: (label: string, items: [] string, selected: *s32, max_visible_ite
 }
 
 
+ui_draw_expansion_marker :: (cx: float32, cy: float32, size: float32, expanded: bool, color: Vector4) {
+    ui_cmd_rect(.{cx - size * 0.5, cy - 1, size, 2}, color);
+    if !expanded ui_cmd_rect(.{cx - 1, cy - size * 0.5, 2, size}, color);
+}
+
 // hierarchical view of information
 
 ui_tree_node :: (label: string, default_open: bool = false) -> bool {
@@ -733,14 +738,14 @@ ui_tree_node :: (label: string, default_open: bool = false) -> bool {
         ui_cmd_rect(rect, style.color_bg_hover);
     }
 
-    // draw arrow triangle
+    // Draw an unambiguous expansion control.
     arrow_size: float32 = 8.0;
     arrow_cx := rect.x + arrow_size * 0.5 + 2.0;
     arrow_cy := rect.y + rect.h * 0.5;
     if state_ptr.open {
-        ui_draw_triangle_down(arrow_cx, arrow_cy, arrow_size, style.color_text_disabled);
+        ui_draw_expansion_marker(arrow_cx, arrow_cy, arrow_size, true, style.color_text_disabled);
     } else {
-        ui_draw_triangle_right(arrow_cx, arrow_cy, arrow_size, style.color_text_disabled);
+        ui_draw_expansion_marker(arrow_cx, arrow_cy, arrow_size, false, style.color_text_disabled);
     }
 
     // draw label
@@ -791,14 +796,14 @@ ui_collapsing_header :: (label: string, default_open: bool = false) -> bool {
           else style.color_bg;
     ui_cmd_rect(rect, bg);
 
-    // draw arrow triangle
+    // Draw an unambiguous expansion control.
     arrow_size: float32 = 8.0;
     arrow_cx := rect.x + style.padding + arrow_size * 0.5;
     arrow_cy := rect.y + rect.h * 0.5;
     if state_ptr.open {
-        ui_draw_triangle_down(arrow_cx, arrow_cy, arrow_size, style.color_text);
+        ui_draw_expansion_marker(arrow_cx, arrow_cy, arrow_size, true, style.color_text);
     } else {
-        ui_draw_triangle_right(arrow_cx, arrow_cy, arrow_size, style.color_text);
+        ui_draw_expansion_marker(arrow_cx, arrow_cy, arrow_size, false, style.color_text);
     }
 
     // draw label
@@ -1060,14 +1065,14 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
     // draw title bar
     ui_cmd_rect(title_rect, style.color_window_title_bg);
 
-    // draw collapse arrow
+    // Draw the window expansion control.
     arrow_size: float32 = 8.0;
     arrow_cx := title_rect.x + style.padding + arrow_size * 0.5;
     arrow_cy := title_rect.y + title_h * 0.5;
     if state_ptr.collapsed {
-        ui_draw_triangle_right(arrow_cx, arrow_cy, arrow_size, style.color_text_disabled);
+        ui_draw_expansion_marker(arrow_cx, arrow_cy, arrow_size, false, style.color_text_disabled);
     } else {
-        ui_draw_triangle_down(arrow_cx, arrow_cy, arrow_size, style.color_text_disabled);
+        ui_draw_expansion_marker(arrow_cx, arrow_cy, arrow_size, true, style.color_text_disabled);
     }
 
     // draw title text
@@ -1310,6 +1315,30 @@ ui_end_panel :: () {
 
 // scroll region (standalone, not tied to a window)
 
+ui_scrollbar_drag_position :: (scroll: float32, mouse_delta: float32, track_travel: float32, max_scroll: float32) -> float32 {
+    if max_scroll <= 0 return 0;
+    if track_travel <= 0 return clamp(scroll, 0.0, max_scroll);
+    return clamp(scroll + mouse_delta / track_travel * max_scroll, 0.0, max_scroll);
+}
+
+ui_scrollbar_pointer_position :: (scroll: float32, mouse_position: float32, mouse_delta: float32,
+                                 track_start: float32, track_size: float32, grab_size: float32,
+                                 max_scroll: float32, pressed: bool) -> float32 {
+    if max_scroll <= 0 return 0;
+    scroll = clamp(scroll, 0.0, max_scroll);
+    travel := track_size - grab_size;
+    if travel <= 0 return scroll;
+    if pressed {
+        grab_start := track_start + scroll / max_scroll * travel;
+        // Grabbing the thumb preserves its position, regardless of the grab point.
+        // Ignore movement from before the press; only empty-track clicks jump.
+        if mouse_position >= grab_start && mouse_position <= grab_start + grab_size return scroll;
+        return clamp((mouse_position - track_start - grab_size * 0.5) / travel, 0.0, 1.0) * max_scroll;
+    }
+    // A stationary pointer must not move the thumb when content/layout changes.
+    return ui_scrollbar_drag_position(scroll, mouse_delta, travel, max_scroll);
+}
+
 ui_begin_scroll_region_ex :: (label: string, height: float32, horizontal_padding: float32 = -1) -> (scroll_y: float32, inner_rect: UI_Rect) {
     ctx := ui_ctx;
     style := *ctx.style;
@@ -1411,9 +1440,9 @@ ui_end_scroll_region :: () {
             ui_try_hot(scrollbar_id, track_rect);
             ui_try_active(scrollbar_id);
             if ui_is_active(scrollbar_id) && ctx.mouse.left_down {
-                track_scroll_h := max(1.0, track_rect.h - grab_h);
-                t := (ctx.mouse.y - track_rect.y - grab_h * 0.5) / track_scroll_h;
-                state_ptr.scroll_y = clamp(t, 0.0, 1.0) * max_scroll;
+                state_ptr.scroll_y = ui_scrollbar_pointer_position(state_ptr.scroll_y, ctx.mouse.y, ctx.mouse.dy,
+                    track_rect.y, track_rect.h, grab_h, max_scroll, ctx.mouse.left_pressed);
+                grab_rect.y = track_rect.y + state_ptr.scroll_y / max_scroll * (track_rect.h - grab_h);
                 ctx.scroll_consumed = true;
             }
 

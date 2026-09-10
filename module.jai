@@ -799,6 +799,13 @@ ui_try_hot :: (id: UI_Id, rect: UI_Rect) -> bool {
     // if a popup is open, only popup items can become hot through the normal
     // widget path. Popup triggers may still claim hot explicitly when toggled.
     if ctx.open_popup_id != UI_ID_NONE && !ctx.in_popup_content return false;
+    // Scrolled content is still laid out beyond its viewport. Match drawing's
+    // clip so an invisible row cannot steal a press from a visible control.
+    // Existing active drags can continue outside the clip until mouse release.
+    if ctx.scissor_stack_depth > 0 {
+        clip := ctx.scissor_stack[ctx.scissor_stack_depth - 1];
+        if clip.w <= 0 || clip.h <= 0 || !rect_contains(clip, ctx.mouse.x, ctx.mouse.y) return false;
+    }
     if rect_contains(rect, ctx.mouse.x, ctx.mouse.y) {
         ctx.hot = id;
         return true;
