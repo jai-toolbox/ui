@@ -1,13 +1,15 @@
 #import "Basic";
 #import "Math";
 #import "Hash_Table";
-#import "GL";
 #import "File";
 #import "File_Utilities";
 #import "System";
 #import "String";
 
-#import "tbx/opengl";
+// Renderer backends interpret this value. OpenGL stores a texture object name;
+// Vulkan stores a compatible descriptor-set handle.
+UI_Texture_Handle :: u64;
+UI_TEXTURE_HANDLE_NONE : UI_Texture_Handle : 0;
 
 #load "msdf.jai";
 
@@ -136,7 +138,7 @@ UI_Draw_Cmd :: struct {
     font_override: *MSDF_Font;
 
     // IMAGE
-    texture_id: GLuint;
+    texture_handle: UI_Texture_Handle;
     tint:       Vector4;
 
     // SCISSOR
@@ -145,25 +147,6 @@ UI_Draw_Cmd :: struct {
 
 UI_RENDER_BATCH_MAX_VERTICES :: 65536;
 UI_RENDER_BATCH_MAX_INDICES  :: 65536;
-
-UI_Render_Batch_Type :: enum {
-    NONE;
-    GEOMETRY;
-    TEXT;
-    IMAGE;
-}
-
-UI_Render_Batch :: struct {
-    type: UI_Render_Batch_Type;
-
-    indices: [..] u32;
-    positions: [..] Vector3;
-    rgba_colors: [..] Vector4;
-    texture_coordinates: [..] Vector2;
-
-    text_font_size: float32;
-    text_font: *MSDF_Font;
-}
 
 UI_Frame_Draw_Buffers :: struct {
     commands: [..] UI_Draw_Cmd;
@@ -183,28 +166,26 @@ UI_Frame_Draw_Buffers :: struct {
     image_rgba_colors: [..] Vector4;
 }
 
-UI_Image_Renderer :: struct {
-    shader_program_gl_handle: GLuint;
-    vertex_attribute_array_gl_handle: GLuint;
-    index_buffer_gl_handle: GLuint;
-    positions_buffer_gl_handle: GLuint;
-    texture_coordinates_buffer_gl_handle: GLuint;
-    rgba_colors_buffer_gl_handle: GLuint;
-
-    texture_sampler_uniform_location: GLint = -1;
-}
-
 UI_Render_Target :: struct {
-    framebuffer: GLuint;
-    color_texture: GLuint;
-    depth_renderbuffer: GLuint;
+    texture_handle: UI_Texture_Handle;
+    backend_framebuffer_handle: u64;
+    backend_depth_buffer_handle: u64;
+    backend_previous_framebuffer_handle: u64;
+    backend_previous_viewport: [4] s32;
     width: s32;
     height: s32;
-
-    previous_framebuffer: GLint;
-    previous_viewport: [4] GLint;
     active: bool;
 }
+
+UI_Render_Target_Deinit_Proc :: #type (backend_user_data: *void, target: *UI_Render_Target);
+UI_Render_Target_Ensure_Size_Proc :: #type (
+    backend_user_data: *void,
+    target: *UI_Render_Target,
+    width: s32,
+    height: s32
+) -> success: bool;
+UI_Render_Target_Begin_Proc :: #type (backend_user_data: *void, target: *UI_Render_Target) -> success: bool;
+UI_Render_Target_End_Proc :: #type (backend_user_data: *void, target: *UI_Render_Target);
 
 UI_Render_Target_View_Input :: struct {
     rect: UI_Rect;
@@ -441,21 +422,19 @@ UI_Context :: struct {
     draw_buffers: UI_Frame_Draw_Buffers;
     overlay_draw_buffers: UI_Frame_Draw_Buffers;
 
-    render_batch: UI_Render_Batch;
-
     style: UI_Style;
 
     window_w: float32;
     window_h: float32;
     work_area: UI_Rect;
 
-    // could be extracted out so people can do their own impl, but until that request is made, this remains.
-    font:          *MSDF_Font;
-    msdf_renderer: *Multi_Channel_Signed_Distance_Field_Text_Renderer;
-    rect_renderer: *Absolute_Position_Color_Alpha_Renderer;
-    image_renderer: UI_Image_Renderer;
-    text_vertex_upload_capacity: s64;
-    text_index_upload_capacity: s64;
+    font: *MSDF_Font;
+
+    render_target_backend_user_data: *void;
+    render_target_deinit_proc:      UI_Render_Target_Deinit_Proc;
+    render_target_ensure_size_proc: UI_Render_Target_Ensure_Size_Proc;
+    render_target_begin_proc:       UI_Render_Target_Begin_Proc;
+    render_target_end_proc:         UI_Render_Target_End_Proc;
 
     window_states:     Table(UI_Id, UI_Window_State);
     text_input_states: Table(UI_Id, UI_Text_Input_State);
@@ -488,16 +467,10 @@ ui_ctx: *UI_Context;
 
 ui_init :: (
     ctx: *UI_Context,
-    font: *MSDF_Font,
-    msdf_renderer: *Multi_Channel_Signed_Distance_Field_Text_Renderer,
-    rect_renderer: *Absolute_Position_Color_Alpha_Renderer
+    font: *MSDF_Font
 ) {
     ctx.style = ui_default_style();
     ctx.font = font;
-    ctx.msdf_renderer = msdf_renderer;
-    ctx.rect_renderer = rect_renderer;
-    ctx.text_vertex_upload_capacity = UI_RENDER_BATCH_MAX_VERTICES;
-    ctx.text_index_upload_capacity = UI_RENDER_BATCH_MAX_INDICES;
     ctx.layout_depth = 0;
     ctx.id_stack_depth = 0;
     ctx.scissor_stack_depth = 0;
@@ -509,7 +482,6 @@ ui_init :: (
     ctx.drawing_overlay = false;
     ctx.in_popup_content = false;
     ctx.current_popup_id = UI_ID_NONE;
-    ui_image_renderer_init(*ctx.image_renderer);
     ui_ctx = ctx;
 }
 
@@ -518,8 +490,7 @@ ui_destroy :: (ctx: *UI_Context) {
     deinit(*ctx.text_input_states);
     ui_frame_draw_buffers_deinit(*ctx.draw_buffers);
     ui_frame_draw_buffers_deinit(*ctx.overlay_draw_buffers);
-    ui_render_batch_deinit(*ctx.render_batch);
-    ui_image_renderer_deinit(*ctx.image_renderer);
+    if ui_ctx == ctx ui_ctx = null;
 }
 
 // frame lifecycle
@@ -638,8 +609,6 @@ ui_end_frame :: () {
         ui_draw_tooltip_internal();
     }
 
-    ui_flush_draw_commands();
-
     if ctx.hot != UI_ID_NONE && ctx.hot != ctx.prev_hot {
         ui_emit_audio(.BUTTON_HOVER, ctx.hot, 0.3);
     }
@@ -647,6 +616,12 @@ ui_end_frame :: () {
 
     ctx.keyboard.key_count = 0;
     ctx.keyboard.char_count = 0;
+}
+
+// Equivalent to Dear ImGui's GetDrawData(): the UI core produces these arrays,
+// then the selected graphics backend consumes them.
+ui_get_draw_buffers :: () -> draw_buffers: *UI_Frame_Draw_Buffers, overlay_draw_buffers: *UI_Frame_Draw_Buffers {
+    return *ui_ctx.draw_buffers, *ui_ctx.overlay_draw_buffers;
 }
 
 // keyboard input (call from your event loop)
@@ -1035,8 +1010,8 @@ ui_cmd_rect_outline :: (rect: UI_Rect, color: Vector4) {
     ui_cmd_rect(.{rect.x + rect.w - t, rect.y + t,          t,      rect.h - t * 2}, color);
 }
 
-ui_cmd_image :: (texture_id: GLuint, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1}) {
-    if texture_id == 0 || rect.w <= 0 || rect.h <= 0 return;
+ui_cmd_image :: (texture_handle: UI_Texture_Handle, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1}) {
+    if texture_handle == UI_TEXTURE_HANDLE_NONE || rect.w <= 0 || rect.h <= 0 return;
 
     ctx := ui_ctx;
     buffers := ui_current_draw_buffers();
@@ -1054,7 +1029,7 @@ ui_cmd_image :: (texture_id: GLuint, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1
     cmd.vertex_count = 4;
     cmd.index_offset = buffers.image_indices.count;
     cmd.index_count = 6;
-    cmd.texture_id = texture_id;
+    cmd.texture_handle = texture_handle;
     cmd.tint = tint;
 
     array_reserve(*buffers.image_positions, buffers.image_positions.count + 4);
@@ -1132,8 +1107,8 @@ ui_cmd_text_font :: (font: *MSDF_Font, text: string, left_edge_x: float32, basel
     ui_add_draw_cmd(cmd);
 }
 
-ui_cmd_texture :: (texture_id: GLuint, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1}) {
-    ui_cmd_image(texture_id, rect, tint);
+ui_cmd_texture :: (texture_handle: UI_Texture_Handle, rect: UI_Rect, tint: Vector4 = .{1, 1, 1, 1}) {
+    ui_cmd_image(texture_handle, rect, tint);
 }
 
 ui_cmd_scissor_push :: (rect: UI_Rect) {
@@ -1178,22 +1153,7 @@ ui_cmd_scissor_pop :: () {
     }
 }
 
-// render backend
-
-ui_render_batch_reset :: (batch: *UI_Render_Batch) {
-    batch.type = .NONE;
-    array_reset_keeping_memory(*batch.indices);
-    array_reset_keeping_memory(*batch.positions);
-    array_reset_keeping_memory(*batch.rgba_colors);
-    array_reset_keeping_memory(*batch.texture_coordinates);
-}
-
-ui_render_batch_deinit :: (batch: *UI_Render_Batch) {
-    array_free(batch.indices);
-    array_free(batch.positions);
-    array_free(batch.rgba_colors);
-    array_free(batch.texture_coordinates);
-}
+// Renderer backends consume these buffers after ui_end_frame.
 
 ui_frame_draw_buffers_reset :: (buffers: *UI_Frame_Draw_Buffers) {
     array_reset_keeping_memory(*buffers.commands);
@@ -1225,486 +1185,45 @@ ui_frame_draw_buffers_deinit :: (buffers: *UI_Frame_Draw_Buffers) {
     array_free(buffers.image_rgba_colors);
 }
 
-ui_flush_render_batch :: (batch: *UI_Render_Batch) {
-    ctx := ui_ctx;
-    if batch.type == .NONE || batch.indices.count == 0 {
-        ui_render_batch_reset(batch);
-        return;
-    }
 
-    if batch.type == {
-        case .GEOMETRY;
-            glUseProgram(ctx.rect_renderer.shader_program_gl_handle);
-            set_aspect_ratio_uniform(ctx.rect_renderer, .{1.0, 1.0});
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            immediate_render(ctx.rect_renderer, batch.indices, batch.positions, batch.rgba_colors);
-
-        case .TEXT;
-            font := ifx batch.text_font != null then batch.text_font else ctx.font;
-            glUseProgram(ctx.msdf_renderer.shader_program_gl_handle);
-
-            glActiveTexture(GL_TEXTURE0);
-            font := ifx batch.text_font != null then batch.text_font else ctx.font;
-            glBindTexture(GL_TEXTURE_2D, font.texture_id);
-
-            set_texture_sampler_uniform(ctx.msdf_renderer, 0);
-            set_aspect_ratio_uniform(ctx.msdf_renderer, .{1.0, 1.0});
-
-            px_range := msdf_screen_pixels_per_distance_range(font, batch.text_font_size);
-            set_screen_pixels_per_distance_range_uniform(ctx.msdf_renderer, px_range);
-
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            immediate_render(ctx.msdf_renderer, batch.indices, batch.positions, batch.texture_coordinates, batch.rgba_colors);
-
-        case .IMAGE;
-            // This legacy batch path is kept for compatibility with older helpers.
-            // Image commands are rendered directly from frame draw buffers below.
-    }
-
-    ui_render_batch_reset(batch);
-}
-
-ui_render_batch_has_room :: (batch: *UI_Render_Batch, vertex_count: s64, index_count: s64) -> bool {
-    return batch.positions.count + vertex_count <= UI_RENDER_BATCH_MAX_VERTICES &&
-           batch.indices.count   + index_count  <= UI_RENDER_BATCH_MAX_INDICES;
-}
-
-ui_render_batch_append_geometry :: (batch: *UI_Render_Batch, cmd: UI_Draw_Cmd) {
-    vertex_offset := cast(u32) batch.positions.count;
-
-    for cmd.positions    array_add(*batch.positions, it);
-    for cmd.rgba_colors  array_add(*batch.rgba_colors, it);
-    for cmd.indices      array_add(*batch.indices, vertex_offset + it);
-}
-
-ui_render_batch_append_geometry_range :: (batch: *UI_Render_Batch, buffers: *UI_Frame_Draw_Buffers, cmd: UI_Draw_Cmd) {
-    vertex_offset := cast(u32) batch.positions.count;
-
-    array_reserve(*batch.positions, batch.positions.count + cmd.vertex_count);
-    array_reserve(*batch.rgba_colors, batch.rgba_colors.count + cmd.vertex_count);
-    array_reserve(*batch.indices, batch.indices.count + cmd.index_count);
-
-    for i : 0..cmd.vertex_count-1 {
-        array_add(*batch.positions, buffers.geometry_positions[cmd.vertex_offset + i]);
-        array_add(*batch.rgba_colors, buffers.geometry_rgba_colors[cmd.vertex_offset + i]);
-    }
-
-    for i : 0..cmd.index_count-1 {
-        index := buffers.geometry_indices[cmd.index_offset + i];
-        array_add(*batch.indices, vertex_offset + index - cast(u32) cmd.vertex_offset);
-    }
-}
-
-ui_render_batch_append_text :: (batch: *UI_Render_Batch, cmd: UI_Draw_Cmd) {
-    font := ifx cmd.font != null then cmd.font else ui_ctx.font;
-    msdf_append_text_geometry(
-        font,
-        cmd.text,
-        cmd.text_x,
-        cmd.text_y,
-        cmd.font_size,
-        ui_ctx.window_w,
-        ui_ctx.window_h,
-        cmd.color,
-        *batch.positions,
-        *batch.texture_coordinates,
-        *batch.rgba_colors,
-        *batch.indices
-    );
-    batch.text_font = font;
-}
-
-ui_render_batch_append_text_range :: (batch: *UI_Render_Batch, buffers: *UI_Frame_Draw_Buffers, cmd: UI_Draw_Cmd) {
-    vertex_offset := cast(u32) batch.positions.count;
-
-    array_reserve(*batch.positions, batch.positions.count + cmd.vertex_count);
-    array_reserve(*batch.texture_coordinates, batch.texture_coordinates.count + cmd.vertex_count);
-    array_reserve(*batch.rgba_colors, batch.rgba_colors.count + cmd.vertex_count);
-    array_reserve(*batch.indices, batch.indices.count + cmd.index_count);
-
-    for i : 0..cmd.vertex_count-1 {
-        array_add(*batch.positions, buffers.text_positions[cmd.vertex_offset + i]);
-        array_add(*batch.texture_coordinates, buffers.text_texture_coordinates[cmd.vertex_offset + i]);
-        array_add(*batch.rgba_colors, buffers.text_rgba_colors[cmd.vertex_offset + i]);
-    }
-
-    for i : 0..cmd.index_count-1 {
-        index := buffers.text_indices[cmd.index_offset + i];
-        array_add(*batch.indices, vertex_offset + index - cast(u32) cmd.vertex_offset);
-    }
-}
-
-UI_IMAGE_VERTEX_SHADER :: #string END
-#version 330 core
-
-in vec3 position;
-in vec2 texture_coordinate_in;
-in vec4 rgba_color_in;
-
-out vec2 texture_coordinate;
-out vec4 rgba_color;
-
-void main() {
-    texture_coordinate = texture_coordinate_in;
-    rgba_color = rgba_color_in;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-}
-END
-
-UI_IMAGE_FRAGMENT_SHADER :: #string END
-#version 330 core
-
-in vec2 texture_coordinate;
-in vec4 rgba_color;
-
-uniform sampler2D texture_sampler;
-
-out vec4 frag_color;
-
-void main() {
-    frag_color = texture(texture_sampler, texture_coordinate) * rgba_color;
-}
-END
-
-ui_image_renderer_init_attribute :: (program: GLuint, vao: GLuint, buffer: GLuint, name: *u8, components: GLint) {
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, buffer);
-
-    location := glGetAttribLocation(program, name);
-    if location >= 0 {
-        glEnableVertexAttribArray(xx location);
-        glVertexAttribPointer(xx location, components, GL_FLOAT, GL_FALSE, 0, null);
-    }
-
-    glBindVertexArray(0);
-}
-
-ui_image_renderer_init_buffer :: (buffer: *GLuint, element_size: s64) {
-    glGenBuffers(1, buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, buffer.*);
-    glBufferData(GL_ARRAY_BUFFER, UI_RENDER_BATCH_MAX_VERTICES * element_size, null, GL_STREAM_DRAW);
-}
-
-ui_image_renderer_init :: (renderer: *UI_Image_Renderer) {
-    program, ok := create_shader_program(UI_IMAGE_VERTEX_SHADER, UI_IMAGE_FRAGMENT_SHADER);
-    if !ok {
-        log_error("Failed to create UI image shader program");
-        return;
-    }
-
-    renderer.shader_program_gl_handle = program;
-    renderer.texture_sampler_uniform_location = glGetUniformLocation(program, "texture_sampler");
-
-    glGenVertexArrays(1, *renderer.vertex_attribute_array_gl_handle);
-    glBindVertexArray(renderer.vertex_attribute_array_gl_handle);
-
-    glGenBuffers(1, *renderer.index_buffer_gl_handle);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderer.index_buffer_gl_handle);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, UI_RENDER_BATCH_MAX_INDICES * size_of(u32), null, GL_STREAM_DRAW);
-
-    ui_image_renderer_init_buffer(*renderer.positions_buffer_gl_handle, size_of(Vector3));
-    ui_image_renderer_init_attribute(program, renderer.vertex_attribute_array_gl_handle, renderer.positions_buffer_gl_handle, "position", 3);
-
-    ui_image_renderer_init_buffer(*renderer.texture_coordinates_buffer_gl_handle, size_of(Vector2));
-    ui_image_renderer_init_attribute(program, renderer.vertex_attribute_array_gl_handle, renderer.texture_coordinates_buffer_gl_handle, "texture_coordinate_in", 2);
-
-    ui_image_renderer_init_buffer(*renderer.rgba_colors_buffer_gl_handle, size_of(Vector4));
-    ui_image_renderer_init_attribute(program, renderer.vertex_attribute_array_gl_handle, renderer.rgba_colors_buffer_gl_handle, "rgba_color_in", 4);
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-}
-
-ui_image_renderer_deinit :: (renderer: *UI_Image_Renderer) {
-    if renderer.shader_program_gl_handle != 0 glDeleteProgram(renderer.shader_program_gl_handle);
-    if renderer.vertex_attribute_array_gl_handle != 0 glDeleteVertexArrays(1, *renderer.vertex_attribute_array_gl_handle);
-    if renderer.index_buffer_gl_handle != 0 glDeleteBuffers(1, *renderer.index_buffer_gl_handle);
-    if renderer.positions_buffer_gl_handle != 0 glDeleteBuffers(1, *renderer.positions_buffer_gl_handle);
-    if renderer.texture_coordinates_buffer_gl_handle != 0 glDeleteBuffers(1, *renderer.texture_coordinates_buffer_gl_handle);
-    if renderer.rgba_colors_buffer_gl_handle != 0 glDeleteBuffers(1, *renderer.rgba_colors_buffer_gl_handle);
-}
-
-ui_upload_geometry_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
-    ctx := ui_ctx;
-    if buffers.geometry_indices.count == 0 return;
-
-    glBindVertexArray(ctx.rect_renderer.immediate_vertex_attribute_array_gl_handle);
-
-    glBindBuffer(GL_ARRAY_BUFFER, ctx.rect_renderer.immediate_positions_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.geometry_positions.count * size_of(Vector3), buffers.geometry_positions.data);
-
-    glBindBuffer(GL_ARRAY_BUFFER, ctx.rect_renderer.immediate_passthrough_rgba_colors_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.geometry_rgba_colors.count * size_of(Vector4), buffers.geometry_rgba_colors.data);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.rect_renderer.immediate_index_buffer_gl_handle);
-    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, buffers.geometry_indices.count * size_of(u32), buffers.geometry_indices.data);
-}
-
-ui_upload_image_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
-    ctx := ui_ctx;
-    if buffers.image_indices.count == 0 return;
-
-    renderer := *ctx.image_renderer;
-    glBindVertexArray(renderer.vertex_attribute_array_gl_handle);
-
-    glBindBuffer(GL_ARRAY_BUFFER, renderer.positions_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.image_positions.count * size_of(Vector3), buffers.image_positions.data);
-
-    glBindBuffer(GL_ARRAY_BUFFER, renderer.texture_coordinates_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.image_texture_coordinates.count * size_of(Vector2), buffers.image_texture_coordinates.data);
-
-    glBindBuffer(GL_ARRAY_BUFFER, renderer.rgba_colors_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.image_rgba_colors.count * size_of(Vector4), buffers.image_rgba_colors.data);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderer.index_buffer_gl_handle);
-    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, buffers.image_indices.count * size_of(u32), buffers.image_indices.data);
-}
-
-ui_upload_text_draw_buffers :: (buffers: *UI_Frame_Draw_Buffers) {
-    ctx := ui_ctx;
-    if buffers.text_indices.count == 0 return;
-
-    glBindVertexArray(ctx.msdf_renderer.immediate_vertex_attribute_array_gl_handle);
-
-    if buffers.text_positions.count > ctx.text_vertex_upload_capacity {
-        new_capacity := max(cast(s64) UI_RENDER_BATCH_MAX_VERTICES, ctx.text_vertex_upload_capacity);
-        while new_capacity < buffers.text_positions.count  new_capacity *= 2;
-
-        glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_positions_buffer_gl_handle);
-        glBufferData(GL_ARRAY_BUFFER, new_capacity * size_of(Vector3), null, GL_STREAM_DRAW);
-        glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_texture_coordinates_buffer_gl_handle);
-        glBufferData(GL_ARRAY_BUFFER, new_capacity * size_of(Vector2), null, GL_STREAM_DRAW);
-        glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_rgba_colors_buffer_gl_handle);
-        glBufferData(GL_ARRAY_BUFFER, new_capacity * size_of(Vector4), null, GL_STREAM_DRAW);
-
-        ctx.text_vertex_upload_capacity = new_capacity;
-    }
-
-    if buffers.text_indices.count > ctx.text_index_upload_capacity {
-        new_capacity := max(cast(s64) UI_RENDER_BATCH_MAX_INDICES, ctx.text_index_upload_capacity);
-        while new_capacity < buffers.text_indices.count  new_capacity *= 2;
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, new_capacity * size_of(u32), null, GL_STREAM_DRAW);
-
-        ctx.text_index_upload_capacity = new_capacity;
-    }
-
-    glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_positions_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_positions.count * size_of(Vector3), buffers.text_positions.data);
-
-    glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_texture_coordinates_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_texture_coordinates.count * size_of(Vector2), buffers.text_texture_coordinates.data);
-
-    glBindBuffer(GL_ARRAY_BUFFER, ctx.msdf_renderer.immediate_passthrough_rgba_colors_buffer_gl_handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, buffers.text_rgba_colors.count * size_of(Vector4), buffers.text_rgba_colors.data);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
-    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, buffers.text_indices.count * size_of(u32), buffers.text_indices.data);
-}
-
-ui_flush_command_list :: (buffers: *UI_Frame_Draw_Buffers) {
-    ctx := ui_ctx;
-
-    // save depth state and disable for UI rendering
-    depth_test_was_enabled := glIsEnabled(GL_DEPTH_TEST);
-    depth_write_was_enabled: GLboolean;
-    glGetBooleanv(GL_DEPTH_WRITEMASK, *depth_write_was_enabled);
-
-    // the depth test checks each fragments depth and discards fragments that are behind something
-    // we don't want this for multiple reasons, first we don't want it to interact with the 3d scene we're already probably rendering
-    // also we don't want z-fighting, instead we'll handle the ordering ourselves
-    glDisable(GL_DEPTH_TEST);
-    // make it so that the ui doesn't write to the depth buffer, is this redundant?
-    glDepthMask(GL_FALSE);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    ui_upload_geometry_draw_buffers(buffers);
-    ui_upload_text_draw_buffers(buffers);
-    ui_upload_image_draw_buffers(buffers);
-
-    active_type := UI_Render_Batch_Type.NONE;
-    active_text_font_size: float32 = 0;
-    active_text_font: *MSDF_Font = null;
-    active_image_texture_id: GLuint = 0;
-
-    for cmd : buffers.commands {
-        if cmd.type == {
-            case .GEOMETRY;
-                if cmd.index_count == 0 continue;
-
-                if active_type != .GEOMETRY {
-                    glUseProgram(ctx.rect_renderer.shader_program_gl_handle);
-                    set_aspect_ratio_uniform(ctx.rect_renderer, .{1.0, 1.0});
-                    glBindVertexArray(ctx.rect_renderer.immediate_vertex_attribute_array_gl_handle);
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.rect_renderer.immediate_index_buffer_gl_handle);
-                    active_type = .GEOMETRY;
-                }
-
-                offset := cmd.index_offset * size_of(u32);
-                glDrawElements(GL_TRIANGLES, xx cmd.index_count, GL_UNSIGNED_INT, cast(*void) offset);
-
-            case .IMAGE;
-                if cmd.index_count == 0 continue;
-
-                same_image_state := active_type == .IMAGE &&
-                                    active_image_texture_id == cmd.texture_id;
-
-                if !same_image_state {
-                    renderer := *ctx.image_renderer;
-                    glUseProgram(renderer.shader_program_gl_handle);
-                    glBindVertexArray(renderer.vertex_attribute_array_gl_handle);
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderer.index_buffer_gl_handle);
-
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, cmd.texture_id);
-                    glUniform1i(renderer.texture_sampler_uniform_location, 0);
-
-                    active_type = .IMAGE;
-                    active_image_texture_id = cmd.texture_id;
-                }
-
-                offset := cmd.index_offset * size_of(u32);
-                glDrawElements(GL_TRIANGLES, xx cmd.index_count, GL_UNSIGNED_INT, cast(*void) offset);
-
-            case .TEXT;
-                if cmd.index_count == 0 continue;
-
-                font := ifx cmd.font != null then cmd.font else ctx.font;
-                same_text_state := active_type == .TEXT &&
-                                   active_text_font == font &&
-                                   active_text_font_size == cmd.font_size;
-
-                if !same_text_state {
-                    glUseProgram(ctx.msdf_renderer.shader_program_gl_handle);
-                    glBindVertexArray(ctx.msdf_renderer.immediate_vertex_attribute_array_gl_handle);
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ctx.msdf_renderer.immediate_index_buffer_gl_handle);
-
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, font.texture_id);
-
-                    set_texture_sampler_uniform(ctx.msdf_renderer, 0);
-                    set_aspect_ratio_uniform(ctx.msdf_renderer, .{1.0, 1.0});
-
-                    px_range := msdf_screen_pixels_per_distance_range(font, cmd.font_size);
-                    set_screen_pixels_per_distance_range_uniform(ctx.msdf_renderer, px_range);
-
-                    active_type = .TEXT;
-                    active_text_font = font;
-                    active_text_font_size = cmd.font_size;
-                }
-
-                offset := cmd.index_offset * size_of(u32);
-                glDrawElements(GL_TRIANGLES, xx cmd.index_count, GL_UNSIGNED_INT, cast(*void) offset);
-
-            case .SCISSOR_PUSH;
-                glEnable(GL_SCISSOR_TEST);
-                gl_y := ctx.window_h - (cmd.scissor_rect.y + cmd.scissor_rect.h);
-                glScissor(
-                    cast(GLint) cmd.scissor_rect.x,
-                    cast(GLint) gl_y,
-                    cast(GLsizei) max(cmd.scissor_rect.w, 0),
-                    cast(GLsizei) max(cmd.scissor_rect.h, 0)
-                );
-
-            case .SCISSOR_POP;
-                glDisable(GL_SCISSOR_TEST);
-        }
-    }
-
-    glBindVertexArray(0);
-    glUseProgram(0);
-
-    // restore depth state
-    if depth_test_was_enabled {
-        glEnable(GL_DEPTH_TEST);
-    } else {
-        glDisable(GL_DEPTH_TEST);
-    }
-    glDepthMask(depth_write_was_enabled);
-}
-
-ui_flush_draw_commands :: () {
-    ctx := ui_ctx;
-
-    ui_flush_command_list(*ctx.draw_buffers);
-
-    // render overlay on top with no scissor
-    if ctx.overlay_draw_buffers.commands.count > 0 {
-        glDisable(GL_SCISSOR_TEST);
-        ui_flush_command_list(*ctx.overlay_draw_buffers);
-    }
+ui_set_render_target_backend :: (
+    backend_user_data: *void,
+    deinit_proc: UI_Render_Target_Deinit_Proc,
+    ensure_size_proc: UI_Render_Target_Ensure_Size_Proc,
+    begin_proc: UI_Render_Target_Begin_Proc,
+    end_proc: UI_Render_Target_End_Proc
+) {
+    ui_ctx.render_target_backend_user_data = backend_user_data;
+    ui_ctx.render_target_deinit_proc = deinit_proc;
+    ui_ctx.render_target_ensure_size_proc = ensure_size_proc;
+    ui_ctx.render_target_begin_proc = begin_proc;
+    ui_ctx.render_target_end_proc = end_proc;
 }
 
 ui_render_target_deinit :: (target: *UI_Render_Target) {
-    if target.framebuffer != 0 glDeleteFramebuffers(1, *target.framebuffer);
-    if target.color_texture != 0 glDeleteTextures(1, *target.color_texture);
-    if target.depth_renderbuffer != 0 glDeleteRenderbuffers(1, *target.depth_renderbuffer);
+    ctx := ui_ctx;
+    if ctx != null && ctx.render_target_deinit_proc != null {
+        ctx.render_target_deinit_proc(ctx.render_target_backend_user_data, target);
+    }
     target.* = .{};
 }
 
-ui_render_target_ensure_size :: (target: *UI_Render_Target, width: s32, height: s32) -> bool {
-    if width <= 0 || height <= 0 return false;
-    if target.framebuffer != 0 && target.width == width && target.height == height return true;
-
-    ui_render_target_deinit(target);
-    target.width = width;
-    target.height = height;
-
-    glGenTextures(1, *target.color_texture);
-    glBindTexture(GL_TEXTURE_2D, target.color_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, xx width, xx height, 0, GL_RGBA, GL_UNSIGNED_BYTE, null);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glGenRenderbuffers(1, *target.depth_renderbuffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, target.depth_renderbuffer);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, xx width, xx height);
-
-    glGenFramebuffers(1, *target.framebuffer);
-    glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.color_texture, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, target.depth_renderbuffer);
-
-    if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE {
-        log_error("UI render target framebuffer is incomplete");
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        return false;
-    }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    return true;
+ui_render_target_ensure_size :: (target: *UI_Render_Target, width: s32, height: s32) -> success: bool {
+    ctx := ui_ctx;
+    if ctx == null || ctx.render_target_ensure_size_proc == null return false;
+    return ctx.render_target_ensure_size_proc(ctx.render_target_backend_user_data, target, width, height);
 }
 
-ui_render_target_begin :: (target: *UI_Render_Target) -> bool {
-    if target.framebuffer == 0 return false;
-
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, *target.previous_framebuffer);
-    glGetIntegerv(GL_VIEWPORT, target.previous_viewport.data);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-    glViewport(0, 0, xx target.width, xx target.height);
-    target.active = true;
-    return true;
+ui_render_target_begin :: (target: *UI_Render_Target) -> success: bool {
+    ctx := ui_ctx;
+    if ctx == null || ctx.render_target_begin_proc == null return false;
+    return ctx.render_target_begin_proc(ctx.render_target_backend_user_data, target);
 }
 
 ui_render_target_end :: (target: *UI_Render_Target) {
-    if !target.active return;
-
-    glBindFramebuffer(GL_FRAMEBUFFER, xx target.previous_framebuffer);
-    glViewport(
-        target.previous_viewport[0],
-        target.previous_viewport[1],
-        xx target.previous_viewport[2],
-        xx target.previous_viewport[3]
-    );
-    target.active = false;
+    ctx := ui_ctx;
+    if ctx == null || ctx.render_target_end_proc == null return;
+    ctx.render_target_end_proc(ctx.render_target_backend_user_data, target);
 }
 
 // shape helpers

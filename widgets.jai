@@ -1637,9 +1637,9 @@ ui_image_placeholder :: (label: string, width: float32, height: float32, tint: V
     ui_cmd_text(label, text_x, text_y, ui_ctx.style.font_size, ui_ctx.style.color_text_disabled);
 }
 
-ui_image :: (texture_id: GLuint, width: float32, height: float32, tint: Vector4 = .{1, 1, 1, 1}) -> UI_Rect {
+ui_image :: (texture_handle: UI_Texture_Handle, width: float32, height: float32, tint: Vector4 = .{1, 1, 1, 1}) -> UI_Rect {
     rect := ui_allocate_rect(width, height);
-    ui_cmd_image(texture_id, rect, tint);
+    ui_cmd_image(texture_handle, rect, tint);
     return rect;
 }
 
@@ -1649,7 +1649,7 @@ ui_render_target_view :: (target: *UI_Render_Target, width: float32, height: flo
     target_h := cast(s32) max(height, 1);
 
     if ui_render_target_ensure_size(target, target_w, target_h) {
-        ui_cmd_image(target.color_texture, rect, tint);
+        ui_cmd_image(target.texture_handle, rect, tint);
     } else {
         ui_cmd_rect(rect, .{0.16, 0.05, 0.05, 1.0});
     }
@@ -1670,7 +1670,7 @@ ui_render_target_view_fill :: (label: string, target: *UI_Render_Target, min_hei
     target_h := cast(s32) max(rect.h, 1);
 
     if ui_render_target_ensure_size(target, target_w, target_h) {
-        ui_cmd_image(target.color_texture, rect, tint);
+        ui_cmd_image(target.texture_handle, rect, tint);
     } else {
         ui_cmd_rect(rect, .{0.16, 0.05, 0.05, 1.0});
     }
