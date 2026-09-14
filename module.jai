@@ -1,10 +1,13 @@
 #import "Basic";
 #import "Math";
 #import "Hash_Table";
-#import "File";
-#import "File_Utilities";
-#import "System";
 #import "String";
+
+#if OS != .WASM {
+    #import "File";
+    #import "File_Utilities";
+    #import "System";
+}
 
 // Renderer backends interpret this value. OpenGL stores a texture object name;
 // Vulkan stores a compatible descriptor-set handle.
@@ -618,7 +621,7 @@ ui_end_frame :: () {
     ctx.keyboard.char_count = 0;
 }
 
-// Equivalent to Dear ImGui's GetDrawData(): the UI core produces these arrays,
+// Returns the draw data produced by the UI core. Renderer backends consume these arrays,
 // then the selected graphics backend consumes them.
 ui_get_draw_buffers :: () -> draw_buffers: *UI_Frame_Draw_Buffers, overlay_draw_buffers: *UI_Frame_Draw_Buffers {
     return *ui_ctx.draw_buffers, *ui_ctx.overlay_draw_buffers;

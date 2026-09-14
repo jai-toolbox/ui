@@ -1,5 +1,7 @@
 
-#import "File";
+#if OS != .WASM {
+    #import "File";
+}
 
 
 // label
@@ -25,6 +27,114 @@ ui_label_colored :: (text: string, color: Vector4) {
 ui_label_disabled :: (text: string) {
     ui_label_colored(text, ui_ctx.style.color_text_disabled);
 }
+
+// Keep ordinary labels single-line and provide an explicit wrapped variant for
+// prose and narrow containers. By default it wraps at the current content boundary.
+ui_label_wrapped :: (text: string, wrap_width: float32 = 0) {
+    ui_label_colored_wrapped(text, ui_ctx.style.color_text, wrap_width);
+}
+
+ui_label_disabled_wrapped :: (text: string, wrap_width: float32 = 0) {
+    ui_label_colored_wrapped(text, ui_ctx.style.color_text_disabled, wrap_width);
+}
+
+ui_label_colored_wrapped :: (text: string, color: Vector4, wrap_width: float32 = 0) {
+    ctx := ui_ctx;
+    style := *ctx.style;
+
+    width := wrap_width;
+    if width <= 0 width = ui_available_width();
+    if width < 1 width = 1;
+
+    line_height := msdf_line_height(ctx.font, style.font_size);
+    line_count := ui_wrapped_text_line_count(text, width, style.font_size);
+    height := cast(float32) line_count * line_height + style.padding;
+    rect := ui_allocate_rect(width, height);
+
+    baseline_y := rect.y + style.padding * 0.5 + ctx.font.ascender_em * style.font_size;
+    cursor: s64 = 0;
+    for 0..line_count-1 {
+        line, next_cursor := ui_next_wrapped_text_line(text, cursor, width, style.font_size);
+        ui_cmd_text(line, rect.x, baseline_y, style.font_size, color);
+        baseline_y += line_height;
+        cursor = next_cursor;
+    }
+}
+
+ui_wrapped_text_height :: (text: string, wrap_width: float32 = 0, font_size: float32 = 0) -> float32 {
+    style := *ui_ctx.style;
+    width := wrap_width;
+    if width <= 0 width = ui_available_width();
+    if width < 1 width = 1;
+
+    size := font_size;
+    if size <= 0 size = style.font_size;
+
+    line_count := ui_wrapped_text_line_count(text, width, size);
+    return cast(float32) line_count * msdf_line_height(ui_ctx.font, size) + style.padding;
+}
+
+#scope_file
+
+ui_wrapped_text_line_count :: (text: string, wrap_width: float32, font_size: float32) -> s32 {
+    if text.count == 0 return 1;
+
+    line_count: s32 = 0;
+    cursor: s64 = 0;
+    while cursor < text.count {
+        _, next_cursor := ui_next_wrapped_text_line(text, cursor, wrap_width, font_size);
+        line_count += 1;
+        if next_cursor <= cursor next_cursor = cursor + 1;
+        cursor = next_cursor;
+    }
+    return max(line_count, 1);
+}
+
+ui_next_wrapped_text_line :: (
+    text: string,
+    start_index: s64,
+    wrap_width: float32,
+    font_size: float32
+) -> (line: string, next_index: s64) {
+    start := start_index;
+    while start < text.count && (text[start] == #char " " || text[start] == #char "\t") start += 1;
+
+    if start >= text.count return "", text.count;
+    if text[start] == #char "\n" return "", start + 1;
+
+    cursor := start;
+    width: float32 = 0;
+    last_break: s64 = -1;
+
+    while cursor < text.count {
+        character := text[cursor];
+        if character == #char "\n" {
+            return string.{cursor - start, text.data + start}, cursor + 1;
+        }
+
+        character_text := string.{1, text.data + cursor};
+        advance := msdf_measure_text_pixels(ui_ctx.font, character_text, font_size);
+        if width + advance > wrap_width {
+            if cursor == start {
+                return character_text, cursor + 1;
+            }
+            if last_break >= start {
+                next := last_break + 1;
+                while next < text.count && (text[next] == #char " " || text[next] == #char "\t") next += 1;
+                return string.{last_break - start, text.data + start}, next;
+            }
+            return string.{cursor - start, text.data + start}, cursor;
+        }
+
+        width += advance;
+        if character == #char " " || character == #char "\t" last_break = cursor;
+        cursor += 1;
+    }
+
+    return string.{text.count - start, text.data + start}, text.count;
+}
+
+#scope_export
 
 // separator
 
@@ -922,10 +1032,15 @@ ui_begin_row :: () {
 ui_end_row :: () {
     row_layout := ui_current_layout();
     row_h := row_layout.row_height;
+    content_bottom := row_layout.origin_y + row_h;
     ui_pop_layout();
 
     parent := ui_current_layout();
     parent.cursor_y += row_h + ui_ctx.style.item_spacing;
+    // Rows and columns are layout containers rather than allocated widgets.
+    // Propagate their bounds so enclosing scroll regions can measure content
+    // built entirely from nested layouts.
+    if content_bottom > parent.content_max_y parent.content_max_y = content_bottom;
 }
 
 ui_begin_column :: (width: float32 = 0) {
@@ -951,6 +1066,7 @@ ui_begin_column :: (width: float32 = 0) {
 ui_end_column :: () {
     col_layout := ui_current_layout();
     content_h := col_layout.cursor_y - col_layout.origin_y;
+    content_bottom := col_layout.origin_y + content_h;
     ui_pop_layout();
 
     parent := ui_current_layout();
@@ -959,6 +1075,7 @@ ui_end_column :: () {
         parent.cursor_x = col_layout.origin_x + col_layout.max_w + ui_ctx.style.item_spacing;
     } else {
         parent.cursor_y += content_h + ui_ctx.style.item_spacing;
+        if content_bottom > parent.content_max_y parent.content_max_y = content_bottom;
     }
 }
 
@@ -1292,6 +1409,9 @@ ui_begin_panel :: (label: string, height: float32 = 0) {
 
     inner := rect_shrink(rect, style.padding);
 
+    // A panel owns a content clip. This prevents
+    // intentionally single-line widgets from drawing over adjacent panels.
+    ui_cmd_scissor_push(inner);
     ui_push_id(label);
     ui_push_layout(.{
         mode       = .VERTICAL,
@@ -1311,6 +1431,7 @@ ui_begin_panel :: (label: string, height: float32 = 0) {
 ui_end_panel :: () {
     ui_pop_layout();
     ui_pop_id();
+    ui_cmd_scissor_pop();
 }
 
 // scroll region (standalone, not tied to a window)
@@ -2006,6 +2127,8 @@ ui_list_box :: (label: string, items: [] string, selected: *s32, visible_count: 
 
     return changed;
 }
+
+#if OS != .WASM {
 
 // file selector
 
@@ -3063,6 +3186,8 @@ ui_file_select_destroy :: (state: *UI_File_Select_State) {
     if state.context_path.count       free(state.context_path);
     ui_file_select_clear_create_error(state);
     state.* = .{};
+}
+
 }
 
 // disabled scope

@@ -1,6 +1,9 @@
 #import "Basic";
 #import "Hash_Table";
-#import "File";
+
+#if OS != .WASM {
+    #import "File";
+}
 
 #import "tbx/json";
 #import "tbx/assets";
@@ -47,31 +50,42 @@ MSDF_Text_Geometry :: struct {
 }
 
 load_msdf_font_metrics :: (json_path: string) -> font: MSDF_Font {
-    font: MSDF_Font;
-
     json_ok: bool;
     json_data: string;
     json_data_is_owned := false;
+
+#if OS == .WASM {
+    assert(assets_initialized, "WebAssembly font loading requires an initialized asset package.");
+    json_ok, json_data = load_asset(json_path);
+} else {
     if assets_initialized {
         json_ok, json_data = load_asset(json_path);
     } else {
         json_data, json_ok = read_entire_file(json_path);
         json_data_is_owned = true;
     }
+}
+
     assert(json_ok, "Failed to read font JSON: %", json_path);
     defer if json_data_is_owned && json_data.data free(json_data.data);
 
+    return parse_msdf_font_metrics(json_data, json_path);
+}
+
+parse_msdf_font_metrics :: (json_data: string, name_for_debugging := "memory font") -> font: MSDF_Font {
+    font: MSDF_Font;
+
     root := json_parse(json_data);
-    assert(root != null, "Failed to parse font JSON: %", json_path);
+    assert(root != null, "Failed to parse font JSON: %", name_for_debugging);
     defer json_free(root);
 
     atlas := json_get_object(root, "atlas");
     met   := json_get_object(root, "metrics");
     glyphs_arr := json_get_array(root, "glyphs");
 
-    assert(atlas      != null, "Missing 'atlas' in font JSON: %", json_path);
-    assert(met        != null, "Missing 'metrics' in font JSON: %", json_path);
-    assert(glyphs_arr != null, "Missing 'glyphs' in font JSON: %", json_path);
+    assert(atlas      != null, "Missing 'atlas' in font JSON: %", name_for_debugging);
+    assert(met        != null, "Missing 'metrics' in font JSON: %", name_for_debugging);
+    assert(glyphs_arr != null, "Missing 'glyphs' in font JSON: %", name_for_debugging);
 
     font.distance_range_atlas_px = cast(float32) json_get_number(atlas, "distanceRange", 4);
     font.atlas_em_size_px        = cast(float32) json_get_number(atlas, "size", 32);
@@ -87,7 +101,7 @@ load_msdf_font_metrics :: (json_path: string) -> font: MSDF_Font {
 
     for i : 0..glyph_count-1 {
         g := json_array_get(glyphs_arr, i);
-        assert(g != null, "Null glyph entry at index % in font JSON: %", i, json_path);
+        assert(g != null, "Null glyph entry at index % in font JSON: %", i, name_for_debugging);
 
         glyph: MSDF_Glyph;
         unicode := cast(u32) json_get_int(g, "unicode", 0);
