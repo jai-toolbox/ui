@@ -508,14 +508,14 @@ and these strings need to persist across frames. Hey so why don't I use an arena
 because its simpler and you actually know your bound of memory on each one instead of overshooting or undershooting with your arena.
 
 */
-ui_text_input :: (label: string, buffer: *[256] u8, length: *s32) -> bool {
+ui_text_input :: (label: string, buffer: *[256] u8, length: *s32, width: float32 = 0) -> bool {
     ctx := ui_ctx;
     style := *ctx.style;
     id := ui_get_id(label);
 
     label_w := msdf_measure_text_pixels(ctx.font, label, style.font_size);
     h := style.input_height;
-    rect := ui_allocate_rect(0, h);
+    rect := ui_allocate_rect(width, h);
 
     label_x := rect.x;
     label_y := ui_text_baseline_y(rect, style.font_size);
