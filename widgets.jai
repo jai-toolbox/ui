@@ -993,19 +993,14 @@ ui_color_edit3 :: (label: string, color: *Vector4) -> bool {
     g := color.y;
     b := color.z;
 
-    ui_begin_row();
     if ui_slider_float("R", *r, 0, 1)  { color.x = r; changed = true; }
-    ui_end_row();
-
-    ui_begin_row();
     if ui_slider_float("G", *g, 0, 1)  { color.y = g; changed = true; }
-    ui_end_row();
-
-    ui_begin_row();
     if ui_slider_float("B", *b, 0, 1)  { color.z = b; changed = true; }
-    ui_end_row();
 
-    ui_color_display("Preview", color.*);
+    ui_label("Resulting color");
+    swatch := ui_allocate_rect(0, 42);
+    ui_cmd_rect(swatch, color.*);
+    ui_cmd_rect_outline(swatch, ui_ctx.style.color_border);
 
     return changed;
 }
