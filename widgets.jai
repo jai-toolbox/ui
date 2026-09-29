@@ -28,8 +28,10 @@ ui_label_disabled :: (text: string) {
     ui_label_colored(text, ui_ctx.style.color_text_disabled);
 }
 
-// Keep ordinary labels single-line and provide an explicit wrapped variant for
-// prose and narrow containers. By default it wraps at the current content boundary.
+/*
+keep ordinary labels single-line and provide an explicit wrapped variant for
+prose and narrow containers. By default it wraps at the current content boundary.
+*/
 ui_label_wrapped :: (text: string, wrap_width: float32 = 0) {
     ui_label_colored_wrapped(text, ui_ctx.style.color_text, wrap_width);
 }
@@ -493,7 +495,7 @@ ui_progress_bar :: (fraction: float32, label: string = "") {
 
 /*
 
-Why does this function take a fixed buffer and length instead of something dynamic like String_Builder or [..] u8?
+why does this function take a fixed buffer and length instead of something dynamic like String_Builder or [..] u8?
 
 Recall that a string in jai is just a few on memory it has a pointer and a count, it doesn't own memory and it can't append to it.
 To build up text we need something that owns the memory.
@@ -848,7 +850,7 @@ ui_tree_node :: (label: string, default_open: bool = false) -> bool {
         ui_cmd_rect(rect, style.color_bg_hover);
     }
 
-    // Draw an unambiguous expansion control.
+    // draw an unambiguous expansion control.
     arrow_size: float32 = 8.0;
     arrow_cx := rect.x + arrow_size * 0.5 + 2.0;
     arrow_cy := rect.y + rect.h * 0.5;
@@ -906,7 +908,7 @@ ui_collapsing_header :: (label: string, default_open: bool = false) -> bool {
           else style.color_bg;
     ui_cmd_rect(rect, bg);
 
-    // Draw an unambiguous expansion control.
+    // draw an unambiguous expansion control.
     arrow_size: float32 = 8.0;
     arrow_cx := rect.x + style.padding + arrow_size * 0.5;
     arrow_cy := rect.y + rect.h * 0.5;
@@ -1032,9 +1034,11 @@ ui_end_row :: () {
 
     parent := ui_current_layout();
     parent.cursor_y += row_h + ui_ctx.style.item_spacing;
-    // Rows and columns are layout containers rather than allocated widgets.
-    // Propagate their bounds so enclosing scroll regions can measure content
-    // built entirely from nested layouts.
+    /*
+    rows and columns are layout containers rather than allocated widgets.
+    Propagate their bounds so enclosing scroll regions can measure content
+    built entirely from nested layouts.
+    */
     if content_bottom > parent.content_max_y parent.content_max_y = content_bottom;
 }
 
@@ -1177,7 +1181,7 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
     // draw title bar
     ui_cmd_rect(title_rect, style.color_window_title_bg);
 
-    // Draw the window expansion control.
+    // draw the window expansion control.
     arrow_size: float32 = 8.0;
     arrow_cx := title_rect.x + style.padding + arrow_size * 0.5;
     arrow_cy := title_rect.y + title_h * 0.5;
@@ -1275,8 +1279,10 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
 
     ui_draw_resize_triangle(win, grip_color, resize_size);
 
-    // scrollbar
-    // note: scroll input is deferred to ui_end_window
+    /*
+    scrollbar
+    note: scroll input is deferred to ui_end_window
+    */
     content_area: UI_Rect = .{
         body_rect.x + style.padding,
         body_rect.y + style.padding,
@@ -1404,8 +1410,10 @@ ui_begin_panel :: (label: string, height: float32 = 0) {
 
     inner := rect_shrink(rect, style.padding);
 
-    // A panel owns a content clip. This prevents
-    // intentionally single-line widgets from drawing over adjacent panels.
+    /*
+    a panel owns a content clip. This prevents
+    intentionally single-line widgets from drawing over adjacent panels.
+    */
     ui_cmd_scissor_push(inner);
     ui_push_id(label);
     ui_push_layout(.{
@@ -1446,12 +1454,14 @@ ui_scrollbar_pointer_position :: (scroll: float32, mouse_position: float32, mous
     if travel <= 0 return scroll;
     if pressed {
         grab_start := track_start + scroll / max_scroll * travel;
-        // Grabbing the thumb preserves its position, regardless of the grab point.
-        // Ignore movement from before the press; only empty-track clicks jump.
+        /*
+        grabbing the thumb preserves its position, regardless of the grab point.
+        Ignore movement from before the press; only empty-track clicks jump.
+        */
         if mouse_position >= grab_start && mouse_position <= grab_start + grab_size return scroll;
         return clamp((mouse_position - track_start - grab_size * 0.5) / travel, 0.0, 1.0) * max_scroll;
     }
-    // A stationary pointer must not move the thumb when content/layout changes.
+    // a stationary pointer must not move the thumb when content/layout changes.
     return ui_scrollbar_drag_position(scroll, mouse_delta, travel, max_scroll);
 }
 
@@ -2458,6 +2468,15 @@ ui_file_select_format_size :: (entry: UI_File_Select_Entry) -> string {
 }
 
 ui_file_select_format_modified :: (entry: UI_File_Select_Entry) -> string {
+    /*
+    linux's Apollo_Time calendar bridge currently rejects pre-Unix-epoch
+    times. Files from archives can legitimately carry those timestamps (or
+    use them as sentinels), so do not pass them to to_calendar().
+    */
+    if ui_file_select_time_less(entry.modification_time, APOLLO_TIME_FOR_JAN_1_1970) {
+        return "-";
+    }
+
     cal := to_calendar(entry.modification_time, .LOCAL);
     month := cast(s32) cal.month_starting_at_0 + 1;
     day := cast(s32) cal.day_of_month_starting_at_0 + 1;
