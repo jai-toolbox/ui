@@ -1112,7 +1112,14 @@ ui_window_snap_rect_for_mouse :: (mouse_x: float32, mouse_y: float32) -> (rect: 
     return .{}, false;
 }
 
-ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 = 50, default_w: float32 = 300, default_h: float32 = 400) -> bool {
+ui_begin_window :: (
+    title: string,
+    default_x: float32 = 50,
+    default_y: float32 = 50,
+    default_w: float32 = 300,
+    default_h: float32 = 400,
+    show_close_button: bool = true,
+) -> bool {
     ctx := ui_ctx;
     style := *ctx.style;
     id := ui_window_id(title);
@@ -1196,29 +1203,30 @@ ui_begin_window :: (title: string, default_x: float32 = 50, default_y: float32 =
     title_text_y := ui_text_baseline_y(title_rect, style.font_size_title);
     ui_cmd_text(title, title_rect.x + arrow_w, title_text_y, style.font_size_title, style.color_text);
 
-    // close button
-    close_rect: UI_Rect = .{
-        win.x + win.w - title_h,
-        win.y,
-        title_h,
-        title_h
-    };
-    close_id := ui_hash_fnv1a("#close", id);
+    if show_close_button {
+        close_rect: UI_Rect = .{
+            win.x + win.w - title_h,
+            win.y,
+            title_h,
+            title_h
+        };
+        close_id := ui_hash_fnv1a("#close", id);
 
-    ui_try_hot(close_id, close_rect);
-    ui_try_active(close_id);
-    if ui_was_clicked(close_id) {
-        state_ptr.open = false;
-        ui_emit_audio(.WINDOW_CLOSE, id);
-        return false;
+        ui_try_hot(close_id, close_rect);
+        ui_try_active(close_id);
+        if ui_was_clicked(close_id) {
+            state_ptr.open = false;
+            ui_emit_audio(.WINDOW_CLOSE, id);
+            return false;
+        }
+
+        if ui_is_hot(close_id) {
+            ui_cmd_rect(close_rect, style.color_bg_hover);
+        }
+
+        x_color := ifx ui_is_hot(close_id) then style.color_text else style.color_text_disabled;
+        ui_draw_x_mark(close_rect, x_color, 2.0);
     }
-
-    if ui_is_hot(close_id) {
-        ui_cmd_rect(close_rect, style.color_bg_hover);
-    }
-
-    x_color := ifx ui_is_hot(close_id) then style.color_text else style.color_text_disabled;
-    ui_draw_x_mark(close_rect, x_color, 2.0);
 
     if state_ptr.collapsed return false;
 
