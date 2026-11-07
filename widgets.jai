@@ -1990,7 +1990,7 @@ ui_drag_float :: (label: string, value: *float32, speed: float32 = 0.1, min_val:
     ui_cmd_rect(drag_rect, bg);
     ui_cmd_rect_outline(drag_rect, style.color_border);
 
-    value_text := tprint("%.2", value.*);
+    value_text := tprint("%", value.*);
     value_x := drag_rect.x + style.padding * 0.5;
     value_y := ui_text_baseline_y(drag_rect, style.font_size);
     ui_cmd_text(value_text, value_x, value_y, style.font_size, style.color_text);
